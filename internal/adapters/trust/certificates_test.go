@@ -9,6 +9,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -32,7 +33,7 @@ func TestStoreAddsListsAndRemovesCertificate(t *testing.T) {
 		t.Fatal("expected managed CA bundle")
 	}
 	info, err := os.Stat(store.Bundle())
-	if err != nil || info.Mode().Perm() != 0o600 {
+	if err != nil || runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("bundle permissions = %v, err=%v", info.Mode().Perm(), err)
 	}
 	if _, err := store.Remove(added[0].Fingerprint[:12]); err != nil {

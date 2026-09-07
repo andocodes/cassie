@@ -3,6 +3,7 @@ package platform
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -22,7 +23,7 @@ func TestBackupArchiveRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(archive)
-	if err != nil || info.Mode().Perm() != 0o600 {
+	if err != nil || runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("archive permissions = %v, err=%v", info.Mode().Perm(), err)
 	}
 	restored := filepath.Join(dir, "restored")
