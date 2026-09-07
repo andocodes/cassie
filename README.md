@@ -150,6 +150,10 @@ prefixes their output with the app name. A failure stops the other apps.
 directory. It runs Infisical Server, PostgreSQL, and Redis through Docker
 Compose at `https://infisical.localhost`. `cassie down` preserves the volumes.
 
+`cassie doctor` checks local prerequisites. In an interactive terminal, it
+offers to install missing managed tools. Use `cassie doctor --fix` in scripts.
+Different tool versions produce warnings and do not fail the check.
+
 Repository commands, cleanup, secrets, and Compose settings require trust. A
 change to those fields requires new trust. User-owned app configuration does
 not.
@@ -168,7 +172,7 @@ backup first.
 | `cassie run [app]` | Run one app. |
 | `cassie run --all`, `cassie run --group <name>` | Run workspace apps. |
 | `cassie status`, `cassie logs [-f]` | Inspect sessions or platform logs. |
-| `cassie doctor` | Check local dependencies. |
+| `cassie doctor [--fix]` | Check dependencies and install missing managed tools. |
 | `cassie trust [app]` | Trust executable repository configuration. |
 | `cassie prune` | Remove stale Portless routes. |
 | `cassie ca` | Manage corporate CAs. |

@@ -170,7 +170,7 @@ func (a *app) dashboard(ctx context.Context) error {
 	case tui.ActionStatus:
 		return a.status(ctx)
 	case tui.ActionDoctor:
-		return a.doctor(ctx)
+		return a.doctor(ctx, false)
 	default:
 		return nil
 	}
@@ -510,52 +510,155 @@ func (a *app) status(ctx context.Context) error {
 }
 
 func (a *app) doctorCommand() *cobra.Command {
-	return &cobra.Command{
+	var fix bool
+	command := &cobra.Command{
 		Use:   "doctor",
 		Short: "Check the local development platform",
 		RunE: func(command *cobra.Command, _ []string) error {
-			return a.doctor(command.Context())
+			return a.doctor(command.Context(), fix)
 		},
 	}
+	command.Flags().BoolVar(&fix, "fix", false, "install missing managed Portless and Infisical CLI tools")
+	return command
 }
 
-func (a *app) doctor(ctx context.Context) error {
-	type check struct {
-		name    string
-		command string
-		args    []string
+type doctorCheck struct {
+	name    string
+	command string
+	args    []string
+	tool    bool
+	version string
+}
+
+type doctorReport struct {
+	failures     int
+	toolFailures int
+	nodeReady    bool
+}
+
+func (a *app) doctor(ctx context.Context, fix bool) error {
+	report := a.runDoctorChecks(ctx, a.doctorChecks())
+	if report.toolFailures > 0 {
+		repair := fix
+		if !repair {
+			if input, ok := a.stdin.(*os.File); ok && interactive(input) {
+				confirmed := false
+				prompt := huh.NewConfirm().
+					Title("Install Portless and Infisical CLI?").
+					Description("Cassie installs pinned versions in its private data directory.").
+					Affirmative("Install").
+					Negative("Skip").
+					Value(&confirmed)
+				if err := huh.NewForm(huh.NewGroup(prompt)).RunWithContext(ctx); err != nil {
+					return err
+				}
+				repair = confirmed
+			}
+		}
+		if repair {
+			if !report.nodeReady {
+				_, _ = fmt.Fprintln(a.stdout, "Install Node.js 24 or newer, then run cassie doctor --fix.")
+				return exitError{code: 1, err: fmt.Errorf("one or more checks failed")}
+			}
+			_, _ = fmt.Fprintln(a.stdout, "Installing pinned Portless and Infisical CLI versions…")
+			if err := a.platform().InstallTools(ctx); err != nil {
+				return exitError{code: 1, err: fmt.Errorf("repair managed tools: %w", err)}
+			}
+			toolReport := a.runDoctorChecks(ctx, a.doctorToolChecks())
+			report.failures = report.failures - report.toolFailures + toolReport.failures
+			report.toolFailures = toolReport.toolFailures
+		} else {
+			_, _ = fmt.Fprintln(a.stdout, "Run cassie doctor --fix to install Cassie's pinned tools.")
+		}
 	}
-	checks := []check{
+	if report.failures > 0 {
+		return exitError{code: 1, err: fmt.Errorf("one or more checks failed")}
+	}
+	return nil
+}
+
+func (a *app) doctorChecks() []doctorCheck {
+	return []doctorCheck{
 		{name: "Docker", command: "docker", args: []string{"info"}},
 		{name: "Compose", command: "docker", args: []string{"compose", "version"}},
 		{name: "Node 24+", command: "node", args: []string{"--version"}},
-		{name: "Portless", command: tool(a.paths, "portless"), args: []string{"--version"}},
-		{name: "Infisical CLI", command: tool(a.paths, "infisical"), args: []string{"--version"}},
+		{name: "Portless", command: tool(a.paths, "portless"), args: []string{"--version"}, tool: true, version: platform.PortlessVersion},
+		{name: "Infisical CLI", command: tool(a.paths, "infisical"), args: []string{"--version"}, tool: true, version: platform.InfisicalVersion},
 	}
-	failed := false
+}
+
+func (a *app) doctorToolChecks() []doctorCheck {
+	checks := a.doctorChecks()
+	return checks[len(checks)-2:]
+}
+
+func (a *app) runDoctorChecks(ctx context.Context, checks []doctorCheck) doctorReport {
+	report := doctorReport{}
 	for _, check := range checks {
 		command := exec.CommandContext(ctx, check.command, check.args...)
 		output, err := command.CombinedOutput()
 		if err != nil {
-			failed = true
-			_, _ = fmt.Fprintf(a.stdout, "%s  %-16s %v\n", failStyle.Render("×"), check.name, err)
+			report.failures++
+			if check.tool {
+				report.toolFailures++
+			}
+			_, _ = fmt.Fprintf(a.stdout, "%s  %-16s %s\n", failStyle.Render("×"), check.name, doctorFailure(output, err))
 			continue
 		}
 		if check.name == "Node 24+" {
 			version := strings.TrimPrefix(firstLine(string(output)), "v")
 			major, parseErr := strconv.Atoi(strings.Split(version, ".")[0])
 			if parseErr != nil || major < 24 {
-				failed = true
+				report.failures++
 				_, _ = fmt.Fprintf(a.stdout, "%s  %-16s found %s\n", failStyle.Render("×"), check.name, version)
 				continue
 			}
+			report.nodeReady = true
 		}
-		_, _ = fmt.Fprintf(a.stdout, "%s  %-16s %s\n", passStyle.Render("✓"), check.name, firstLine(string(output)))
+		detail := firstLine(string(output))
+		if check.version != "" {
+			found := reportedVersion(detail)
+			if found != "" && found != check.version {
+				_, _ = fmt.Fprintf(a.stdout, "%s  %-16s %s (Cassie pins %s)\n", warnStyle.Render("!"), check.name, found, check.version)
+				continue
+			}
+		}
+		_, _ = fmt.Fprintf(a.stdout, "%s  %-16s %s\n", passStyle.Render("✓"), check.name, detail)
 	}
-	if failed {
-		return exitError{code: 1, err: fmt.Errorf("one or more checks failed")}
+	return report
+}
+
+func doctorFailure(output []byte, err error) string {
+	var missing *exec.Error
+	if errors.As(err, &missing) {
+		return "not installed"
 	}
-	return nil
+	if detail := firstLine(string(output)); detail != "" {
+		return detail
+	}
+	return err.Error()
+}
+
+func reportedVersion(value string) string {
+	for _, field := range strings.Fields(value) {
+		candidate := strings.Trim(strings.TrimPrefix(field, "v"), ",;()[]")
+		core := strings.SplitN(candidate, "-", 2)[0]
+		parts := strings.Split(core, ".")
+		if len(parts) != 3 {
+			continue
+		}
+		valid := true
+		for _, part := range parts {
+			if _, err := strconv.Atoi(part); err != nil {
+				valid = false
+				break
+			}
+		}
+		if valid {
+			return candidate
+		}
+	}
+	return ""
 }
 
 func (a *app) upCommand() *cobra.Command {
@@ -1116,5 +1219,6 @@ func interactive(file *os.File) bool {
 var (
 	titleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212"))
 	passStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
+	warnStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
 	failStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
 )
