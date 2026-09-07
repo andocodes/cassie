@@ -115,6 +115,9 @@ func discoverRepositories(root string, workspace Workspace) ([]string, error) {
 	var repositories []string
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
+			if path != root && errors.Is(walkErr, fs.ErrPermission) {
+				return filepath.SkipDir
+			}
 			return walkErr
 		}
 		if !entry.IsDir() {
@@ -136,6 +139,9 @@ func discoverRepositories(root string, workspace Workspace) ([]string, error) {
 				repositories = append(repositories, path)
 				return filepath.SkipDir
 			}
+		}
+		if depth >= workspace.Depth {
+			return filepath.SkipDir
 		}
 		return nil
 	})
