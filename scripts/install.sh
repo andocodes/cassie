@@ -3,7 +3,19 @@ set -eu
 
 repository="${CASSIE_REPOSITORY:-andocodes/cassie}"
 install_dir="${CASSIE_INSTALL_DIR:-$HOME/.local/bin}"
-base_url="https://github.com/${repository}/releases/latest/download"
+version="${CASSIE_VERSION:-}"
+
+if [ -z "$version" ]; then
+  latest_url="$(curl --fail --location --silent --show-error --output /dev/null --write-out '%{url_effective}' "https://github.com/${repository}/releases/latest")"
+  version="${latest_url##*/}"
+fi
+
+case "$version" in
+  v[0-9]*) ;;
+  *) echo "cassie: could not resolve a release version" >&2; exit 1 ;;
+esac
+
+base_url="https://github.com/${repository}/releases/download/${version}"
 
 case "$(uname -s)" in
   Darwin) os=darwin ;;
@@ -44,4 +56,4 @@ fi
 tar -xzf "${temporary}/${archive}" -C "$temporary" cassie
 mkdir -p "$install_dir"
 install -m 0755 "${temporary}/cassie" "${install_dir}/cassie"
-echo "Installed cassie to ${install_dir}/cassie"
+echo "Installed cassie ${version} to ${install_dir}/cassie"
