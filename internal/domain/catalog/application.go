@@ -1,6 +1,8 @@
 package catalog
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -137,4 +139,18 @@ func (a Application) ValidateRunnable() error {
 
 func (a Application) URL() string {
 	return "https://" + a.Domain + ".localhost"
+}
+
+func SuggestedDomain(name string) string {
+	const maxLabelLength = 63
+	const hashLength = 8
+
+	name = strings.Trim(name, "-")
+	if len(name) <= maxLabelLength {
+		return name
+	}
+	digest := sha256.Sum256([]byte(name))
+	suffix := hex.EncodeToString(digest[:])[:hashLength]
+	prefix := strings.TrimRight(name[:maxLabelLength-hashLength-1], "-")
+	return prefix + "-" + suffix
 }

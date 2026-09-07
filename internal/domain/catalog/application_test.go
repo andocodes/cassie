@@ -36,3 +36,18 @@ func TestCommandYAMLAcceptsSimpleAndStructuredForms(t *testing.T) {
 		t.Fatalf("unexpected structured command: %#v", app.Commands[1])
 	}
 }
+
+func TestSuggestedDomainShortensLongNamesWithoutCollisions(t *testing.T) {
+	first := SuggestedDomain("reuters-devops-enterprise-news-phoebe-infrastructure-atlas-session")
+	second := SuggestedDomain("reuters-devops-enterprise-news-phoebe-infrastructure-atlas-staging")
+
+	if len(first) > 63 || len(second) > 63 {
+		t.Fatalf("suggested domains exceed one DNS label: %q, %q", first, second)
+	}
+	if first == second {
+		t.Fatalf("distinct names produced the same domain %q", first)
+	}
+	if !validDomain(first) || !validDomain(second) {
+		t.Fatalf("suggested domains are invalid: %q, %q", first, second)
+	}
+}

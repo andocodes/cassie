@@ -61,7 +61,7 @@ func (r Resolver) Resolve(ctx context.Context, dir, requestedName string) (Resol
 	baseName := sanitizeName(filepath.Base(repository.Root))
 	effective := map[string]any{
 		"name":   baseName,
-		"domain": baseName,
+		"domain": catalog.SuggestedDomain(baseName),
 		"grace":  "10s",
 	}
 	var sources []string

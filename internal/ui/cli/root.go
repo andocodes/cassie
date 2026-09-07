@@ -919,7 +919,7 @@ func (a *app) linkWithScope(ctx context.Context, forcedScope string) error {
 		repository = ports.Repository{Root: dir}
 	}
 	name := sanitize(filepath.Base(dir))
-	domain := name
+	domain := catalog.SuggestedDomain(name)
 	port := ""
 	commands := inferCommand(dir)
 	cleanup := ""
