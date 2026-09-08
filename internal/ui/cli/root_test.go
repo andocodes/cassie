@@ -25,7 +25,7 @@ func TestRunFromUserConfigWithoutRepositoryFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	portless := filepath.Join(binDir, "portless")
-	if err := os.WriteFile(portless, []byte("#!/bin/sh\nif [ \"$1\" = \"--name\" ]; then shift 2; fi\nexec \"$@\"\n"), 0o755); err != nil {
+	if err := os.WriteFile(portless, []byte("#!/bin/sh\nif [ \"$1\" = \"--name\" ]; then shift 2; fi\nif [ \"$1\" = \"--\" ]; then shift; fi\nexec \"$@\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
