@@ -657,7 +657,7 @@ func (a *app) upCommand() *cobra.Command {
 				return err
 			}
 			manager := a.platform()
-			_, _ = fmt.Fprintln(a.stdout, "Starting Cassie's managed Infisical and Portless platform…")
+			_, _ = fmt.Fprintln(a.stdout, "Starting Cassie's local platform…")
 			if err := manager.Up(command.Context()); err != nil {
 				return err
 			}

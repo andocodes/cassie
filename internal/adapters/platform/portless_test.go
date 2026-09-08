@@ -47,6 +47,38 @@ func TestReadyReportsStoppedProxy(t *testing.T) {
 	}
 }
 
+func TestInstallServiceUsesCassieStateDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX fake executable")
+	}
+	root := t.TempDir()
+	binary := filepath.Join(root, "portless")
+	arguments := filepath.Join(root, "arguments")
+	state := filepath.Join(root, "state")
+	shim := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CASSIE_ARGUMENTS\"\n"
+	if err := os.WriteFile(binary, []byte(shim), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	portless := Portless{
+		Binary: binary,
+		Env: map[string]string{
+			"CASSIE_ARGUMENTS":   arguments,
+			"PORTLESS_STATE_DIR": state,
+		},
+	}
+	if err := portless.InstallService(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(arguments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "service\ninstall\n--state-dir\n" + state + "\n"
+	if string(content) != want {
+		t.Fatalf("arguments = %q, want %q", content, want)
+	}
+}
+
 func TestWrapRunsCompoundCommandThroughAShell(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX fake executable")

@@ -30,26 +30,18 @@ func (p Portless) Ready(ctx context.Context) (bool, error) {
 	return !strings.Contains(string(output), "Proxy is not running"), nil
 }
 
-func (p Portless) Start(ctx context.Context) error {
-	command := exec.CommandContext(ctx, p.binary(), "proxy", "start")
-	command.Env = appendEnv(os.Environ(), p.Env)
-	command.Stdin = p.Stdin
-	command.Stdout = p.Stdout
-	command.Stderr = p.Stderr
-	if err := command.Run(); err != nil {
-		return fmt.Errorf("start Portless proxy: %w", err)
+func (p Portless) InstallService(ctx context.Context) error {
+	args := []string{"service", "install"}
+	if stateDir := strings.TrimSpace(p.Env["PORTLESS_STATE_DIR"]); stateDir != "" {
+		args = append(args, "--state-dir", stateDir)
 	}
-	return nil
-}
-
-func (p Portless) Stop(ctx context.Context) error {
-	command := exec.CommandContext(ctx, p.binary(), "proxy", "stop")
+	command := exec.CommandContext(ctx, p.binary(), args...)
 	command.Env = appendEnv(os.Environ(), p.Env)
 	command.Stdin = p.Stdin
 	command.Stdout = p.Stdout
 	command.Stderr = p.Stderr
 	if err := command.Run(); err != nil {
-		return fmt.Errorf("stop Portless proxy: %w", err)
+		return fmt.Errorf("install Portless service: %w", err)
 	}
 	return nil
 }

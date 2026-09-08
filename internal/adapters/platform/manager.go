@@ -84,10 +84,17 @@ func (m Manager) Up(ctx context.Context) error {
 	}
 	if !ready {
 		if m.NonInteractive {
-			return fmt.Errorf("Portless proxy is not running; run cassie up once to complete interactive setup")
+			return fmt.Errorf("Portless service is not running; run cassie up once to install it")
 		}
-		if err := router.Start(ctx); err != nil {
+		if err := router.InstallService(ctx); err != nil {
 			return err
+		}
+		ready, err = router.Ready(ctx)
+		if err != nil {
+			return err
+		}
+		if !ready {
+			return fmt.Errorf("Portless service did not become ready after installation")
 		}
 	}
 	if err := m.waitForInfisical(ctx, time.Minute); err != nil {
@@ -103,9 +110,6 @@ func (m Manager) Down(ctx context.Context) error {
 		result = errors.Join(result, err)
 	}
 	if err := m.compose(ctx, "down", "--remove-orphans"); err != nil {
-		result = errors.Join(result, err)
-	}
-	if err := router.Stop(ctx); err != nil {
 		result = errors.Join(result, err)
 	}
 	return result
