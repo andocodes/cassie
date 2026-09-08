@@ -86,12 +86,17 @@ func (rowDelegate) Render(writer io.Writer, model list.Model, index int, value l
 	if !ok {
 		return
 	}
+	selected := index == model.Index()
+	rowWidth := model.Width()
+	if selected {
+		rowWidth = max(rowWidth-selectedStyle.GetHorizontalPadding(), 4)
+	}
 	indicator, indicatorStyle := stateIndicator(row.state)
-	name := truncate(row.entry.Application.Name, max(model.Width()-lipgloss.Width(row.state)-5, 4))
-	gap := max(model.Width()-lipgloss.Width(indicator)-lipgloss.Width(name)-lipgloss.Width(row.state)-3, 1)
+	name := truncate(row.entry.Application.Name, max(rowWidth-lipgloss.Width(row.state)-5, 4))
+	gap := max(rowWidth-lipgloss.Width(indicator)-lipgloss.Width(name)-lipgloss.Width(row.state)-3, 1)
 	line := indicatorStyle.Render(indicator) + " " + name + strings.Repeat(" ", gap) + mutedStyle.Render(row.state)
-	if index == model.Index() {
-		line = selectedStyle.Width(max(model.Width(), lipgloss.Width(line))).Render(line)
+	if selected {
+		line = selectedStyle.Width(model.Width()).Render(line)
 	}
 	_, _ = fmt.Fprint(writer, line)
 }
@@ -713,7 +718,7 @@ func applicationKey(name, root string) string { return name + "\x00" + filepath.
 
 func (m *dashboard) resize() {
 	bodyHeight := max(m.height-4, 6)
-	overlayWidth := min(max(m.width-12, 28), 88)
+	overlayWidth := min(max(m.width-12, 28), 88) - overlayStyle.GetHorizontalPadding()
 	if m.width < 72 {
 		m.list.SetSize(max(m.width-4, 12), max(bodyHeight-2, 4))
 		m.detected.SetSize(overlayWidth, max(bodyHeight-10, 4))
@@ -988,7 +993,7 @@ var (
 	failStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
 	mutedStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	linkStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Underline(true)
-	selectedStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("255")).Background(lipgloss.Color("237"))
+	selectedStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("255")).Background(lipgloss.Color("57")).Padding(0, 1)
 	detailStyle   = lipgloss.NewStyle()
 	panelStyle    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
 	overlayStyle  = lipgloss.NewStyle().Border(lipgloss.DoubleBorder()).Padding(1, 2).Background(lipgloss.Color("235"))

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	runtimeDomain "github.com/andocodes/cassie/internal/domain/runtime"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func TestDashboardSeparatesLinkedApplicationsFromDetectedRepositories(t *testing.T) {
@@ -93,6 +95,15 @@ func TestDetectedRepositoriesOpenOnFirstPageAndSupportPaging(t *testing.T) {
 	if !model.detected.ShowPagination() || model.detected.Paginator.TotalPages < 2 {
 		t.Fatalf("pagination = visible %t, pages %d", model.detected.ShowPagination(), model.detected.Paginator.TotalPages)
 	}
+	var selected bytes.Buffer
+	rowDelegate{}.Render(&selected, model.detected, 0, model.detected.Items()[0])
+	selectedLine := ansi.Strip(selected.String())
+	if strings.Contains(selectedLine, "\n") || !strings.Contains(selectedLine, "detected") {
+		t.Fatalf("selected row must render on one line: %q", selectedLine)
+	}
+	if width := lipgloss.Width(selected.String()); width != model.detected.Width() {
+		t.Fatalf("selected row width = %d, want %d", width, model.detected.Width())
+	}
 
 	_, _ = model.Update(key("j"))
 	if model.detected.Index() != 1 {
@@ -108,6 +119,11 @@ func TestDetectedRepositoriesOpenOnFirstPageAndSupportPaging(t *testing.T) {
 	_, _ = model.Update(tea.MouseMsg{Button: tea.MouseButtonWheelDown, Action: tea.MouseActionPress})
 	if model.detected.Index() != 3 {
 		t.Fatalf("selection after mouse wheel = %d, want 3", model.detected.Index())
+	}
+
+	model.detected.GoToEnd()
+	if view := ansi.Strip(model.View()); !strings.Contains(view, "repository-with-a-long-name-62") {
+		t.Fatalf("last detected repository is not visible:\n%s", view)
 	}
 }
 
