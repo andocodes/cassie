@@ -35,6 +35,16 @@ func TestApplicationNormalizesFriendlyDomainInputs(t *testing.T) {
 	}
 }
 
+func TestApplicationURLIncludesNonStandardProxyPort(t *testing.T) {
+	app := Application{Name: "phoebe", Domain: "phoebe"}
+	if got, want := app.URLAt(1355), "https://phoebe.localhost:1355"; got != want {
+		t.Fatalf("URLAt(1355) = %q, want %q", got, want)
+	}
+	if got, want := app.URLAt(443), "https://phoebe.localhost"; got != want {
+		t.Fatalf("URLAt(443) = %q, want %q", got, want)
+	}
+}
+
 func TestSuggestedDomainNormalizesApplicationName(t *testing.T) {
 	if got := SuggestedDomain("Phoebe UI"); got != "phoebe-ui" {
 		t.Fatalf("SuggestedDomain = %q, want phoebe-ui", got)

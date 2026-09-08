@@ -23,12 +23,12 @@ const (
 	PortlessVersion  = "0.15.6"
 	InfisicalVersion = "0.43.129"
 	ServerVersion    = "v0.165.3"
-	InfisicalURL     = "https://infisical.localhost"
 	infisicalPort    = 4080
 )
 
 type Manager struct {
 	DataDir        string
+	PortFile       string
 	Tools          string
 	Stdin          io.Reader
 	Stdout         io.Writer
@@ -85,29 +85,22 @@ func (m Manager) Up(ctx context.Context) error {
 	if err := writeFile(filepath.Join(m.DataDir, "compose.yaml"), []byte(composeFile), 0o600); err != nil {
 		return err
 	}
-	if err := m.ensureEnvironment(); err != nil {
+	router := Portless{Binary: m.Binary("portless"), Env: m.Env, Stdin: m.Stdin, Stdout: m.Stdout, Stderr: m.Stderr}
+	proxyPort, err := m.ensurePortless(ctx, router)
+	if err != nil {
+		return err
+	}
+	m.Env = router.withPort(proxyPort).Env
+	if err := m.ensureEnvironment(proxyPort); err != nil {
 		return err
 	}
 	if err := m.compose(ctx, "up", "-d", "--remove-orphans"); err != nil {
 		return err
 	}
-	router := Portless{Binary: m.Binary("portless"), Env: m.Env, Stdin: m.Stdin, Stdout: m.Stdout, Stderr: m.Stderr}
-	ready, err := router.Ready(ctx)
-	if err != nil {
-		return err
-	}
-	if !ready {
-		if m.NonInteractive {
-			return fmt.Errorf("Portless proxy is not running; run cassie up to start it")
-		}
-		if err := router.Start(ctx); err != nil {
-			return err
-		}
-	}
 	if err := m.waitForInfisical(ctx, time.Minute); err != nil {
 		return err
 	}
-	return router.Alias(ctx, "infisical", infisicalPort)
+	return router.withPort(proxyPort).Alias(ctx, "infisical", infisicalPort)
 }
 
 func (m Manager) Down(ctx context.Context) error {
@@ -156,16 +149,16 @@ func (m Manager) Binary(name string) string {
 
 func (m Manager) LoginStatus(ctx context.Context) bool {
 	command := exec.CommandContext(ctx, m.Binary("infisical"), "login", "status", "--json")
-	command.Env = append(m.environment(), "INFISICAL_API_URL="+InfisicalURL+"/api")
+	command.Env = append(m.environment(), "INFISICAL_API_URL="+m.InfisicalURL()+"/api")
 	return command.Run() == nil
 }
 
 func (m Manager) Login(ctx context.Context) error {
-	command := exec.CommandContext(ctx, m.Binary("infisical"), "login", "--interactive", "--domain="+InfisicalURL)
+	command := exec.CommandContext(ctx, m.Binary("infisical"), "login", "--interactive", "--domain="+m.InfisicalURL())
 	command.Stdin = m.Stdin
 	command.Stdout = m.Stdout
 	command.Stderr = m.Stderr
-	command.Env = append(m.environment(), "INFISICAL_API_URL="+InfisicalURL+"/api")
+	command.Env = append(m.environment(), "INFISICAL_API_URL="+m.InfisicalURL()+"/api")
 	if err := command.Run(); err != nil {
 		return fmt.Errorf("log in to Infisical: %w", err)
 	}
@@ -202,7 +195,7 @@ func (m Manager) Bootstrap(ctx context.Context, credentials BootstrapCredentials
 		return fmt.Errorf("Infisical bootstrap requires an email, password, and organization")
 	}
 	var output bytes.Buffer
-	command := exec.CommandContext(ctx, m.Binary("infisical"), "bootstrap", "--domain="+InfisicalURL, "--silent", "--telemetry=false")
+	command := exec.CommandContext(ctx, m.Binary("infisical"), "bootstrap", "--domain="+m.InfisicalURL(), "--silent", "--telemetry=false")
 	command.Stdout = &output
 	command.Stderr = m.Stderr
 	command.Env = append(m.environment(),
@@ -231,7 +224,7 @@ func (m Manager) Bootstrap(ctx context.Context, credentials BootstrapCredentials
 
 func (m Manager) loginWithCredentials(ctx context.Context, email, password, organizationID string) error {
 	var diagnostics bytes.Buffer
-	command := exec.CommandContext(ctx, m.Binary("infisical"), "login", "--method=user", "--domain="+InfisicalURL, "--silent", "--telemetry=false")
+	command := exec.CommandContext(ctx, m.Binary("infisical"), "login", "--method=user", "--domain="+m.InfisicalURL(), "--silent", "--telemetry=false")
 	command.Stdout = &diagnostics
 	command.Stderr = &diagnostics
 	command.Env = append(m.environment(),
@@ -262,11 +255,20 @@ func (m Manager) compose(ctx context.Context, args ...string) error {
 }
 
 func (m Manager) environment() []string {
-	values := os.Environ()
+	values := make(map[string]string, len(m.Env)+1)
 	for key, value := range m.Env {
-		values = append(values, key+"="+value)
+		values[key] = value
 	}
-	return values
+	if port, configured := os.LookupEnv("PORTLESS_PORT"); configured {
+		values["PORTLESS_PORT"] = port
+	} else {
+		if _, configured = values["PORTLESS_PORT"]; !configured {
+			if port, exists, err := readProxyPort(m.proxyPortPath()); err == nil && exists {
+				values["PORTLESS_PORT"] = strconv.Itoa(port)
+			}
+		}
+	}
+	return appendEnv(os.Environ(), values)
 }
 
 func (m Manager) toolsCurrent() bool {
@@ -278,10 +280,10 @@ func (m Manager) toolsCurrent() bool {
 	return string(content) == want && regular(m.Binary("portless")) && regular(m.Binary("infisical"))
 }
 
-func (m Manager) ensureEnvironment() error {
+func (m Manager) ensureEnvironment(proxyPort int) error {
 	path := filepath.Join(m.DataDir, ".env")
 	if regular(path) {
-		return repairLegacyEncryptionKey(path)
+		return repairEnvironment(path, m.InfisicalURLAt(proxyPort))
 	}
 	encryptionKey, err := randomHex(16)
 	if err != nil {
@@ -303,7 +305,7 @@ func (m Manager) ensureEnvironment() error {
 		"POSTGRES_DB=infisical",
 		"DB_CONNECTION_URI=postgres://infisical:" + password + "@db:5432/infisical",
 		"REDIS_URL=redis://redis:6379",
-		"SITE_URL=" + InfisicalURL,
+		"SITE_URL=" + m.InfisicalURLAt(proxyPort),
 		"TELEMETRY_ENABLED=false",
 		"OTEL_TELEMETRY_COLLECTION_ENABLED=false",
 		"",
@@ -311,28 +313,53 @@ func (m Manager) ensureEnvironment() error {
 	return writeFile(path, []byte(content), 0o600)
 }
 
-func repairLegacyEncryptionKey(path string) error {
+func repairEnvironment(path, infisicalURL string) error {
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("read platform environment: %w", err)
 	}
 	lines := strings.Split(string(content), "\n")
+	changed := false
 	for index, line := range lines {
 		key, found := strings.CutPrefix(line, "ENCRYPTION_KEY=")
-		if !found || len(key) != 64 {
-			continue
+		if found && len(key) == 64 {
+			if _, err := hex.DecodeString(key); err == nil {
+				replacement, err := randomHex(16)
+				if err != nil {
+					return err
+				}
+				lines[index] = "ENCRYPTION_KEY=" + replacement
+				changed = true
+			}
 		}
-		if _, err := hex.DecodeString(key); err != nil {
-			return nil
+		if strings.HasPrefix(line, "SITE_URL=") && line != "SITE_URL="+infisicalURL {
+			lines[index] = "SITE_URL=" + infisicalURL
+			changed = true
 		}
-		replacement, err := randomHex(16)
-		if err != nil {
-			return err
-		}
-		lines[index] = "ENCRYPTION_KEY=" + replacement
+	}
+	if changed {
 		return writeFile(path, []byte(strings.Join(lines, "\n")), 0o600)
 	}
 	return nil
+}
+
+func (m Manager) ProxyPort() int {
+	if port, configured, err := explicitProxyPort(m.Env); err == nil && configured {
+		return port
+	}
+	return StoredProxyPort(m.proxyPortPath())
+}
+
+func (m Manager) InfisicalURL() string {
+	return m.InfisicalURLAt(m.ProxyPort())
+}
+
+func (m Manager) InfisicalURLAt(proxyPort int) string {
+	address := "https://infisical.localhost"
+	if proxyPort > 0 && proxyPort != 443 {
+		address += ":" + strconv.Itoa(proxyPort)
+	}
+	return address
 }
 
 func (m Manager) waitForInfisical(ctx context.Context, timeout time.Duration) error {

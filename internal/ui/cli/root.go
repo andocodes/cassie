@@ -245,7 +245,7 @@ func (a *app) runMany(ctx context.Context, resolvedApps []config.Resolved) error
 	if len(resolvedApps) == 1 {
 		application := resolvedApps[0].Application
 		handler := a.runner(store, portless, infisical, a.stdout, a.stderr)
-		_, _ = fmt.Fprintf(a.stdout, "%s  %s\n", titleStyle.Render(application.Name), application.URL())
+		_, _ = fmt.Fprintf(a.stdout, "%s  %s\n", titleStyle.Render(application.Name), a.applicationURL(application))
 		result, err := handler.Handle(ctx, application)
 		if err != nil {
 			return exitError{code: result.ExitCode, err: err}
@@ -305,7 +305,7 @@ func (a *app) runner(store ports.SessionStore, portless, infisical string, stdou
 	environment := a.developmentEnvironment()
 	return appcommand.RunApplication{
 		Runner:   processadapter.Runner{},
-		Secrets:  secretadapter.Infisical{Binary: infisical, Env: environment},
+		Secrets:  secretadapter.Infisical{Binary: infisical, APIURL: a.platform().InfisicalURL() + "/api", Env: environment},
 		Prepare:  composeadapter.Environment{RuntimeDir: filepath.Join(a.paths.State, "runtime")},
 		Sessions: store,
 		Router:   platform.Portless{Binary: portless, Env: environment},
@@ -661,7 +661,7 @@ func (a *app) upCommand() *cobra.Command {
 			if err := manager.Up(command.Context()); err != nil {
 				return err
 			}
-			_, _ = fmt.Fprintln(a.stdout, passStyle.Render("Ready"), platform.InfisicalURL)
+			_, _ = fmt.Fprintln(a.stdout, passStyle.Render("Ready"), manager.InfisicalURL())
 			if noLogin || manager.LoginStatus(command.Context()) {
 				return nil
 			}
@@ -781,13 +781,18 @@ func (a *app) pruneCommand() *cobra.Command {
 
 func (a *app) platform() platform.Manager {
 	return platform.Manager{
-		DataDir: a.paths.Platform(),
-		Tools:   a.paths.Tools(),
-		Stdin:   a.stdin,
-		Stdout:  a.stdout,
-		Stderr:  a.stderr,
-		Env:     a.developmentEnvironment(),
+		DataDir:  a.paths.Platform(),
+		PortFile: a.paths.PortlessPort(),
+		Tools:    a.paths.Tools(),
+		Stdin:    a.stdin,
+		Stdout:   a.stdout,
+		Stderr:   a.stderr,
+		Env:      a.developmentEnvironment(),
 	}
+}
+
+func (a *app) applicationURL(application catalog.Application) string {
+	return application.URLAt(a.platform().ProxyPort())
 }
 
 func (a *app) backupCommand() *cobra.Command {
@@ -955,6 +960,11 @@ func (a *app) developmentEnvironment() map[string]string {
 		"NO_PROXY":           noProxy,
 		"no_proxy":           noProxy,
 		"PORTLESS_STATE_DIR": filepath.Join(a.paths.State, "portless"),
+	}
+	if port := strings.TrimSpace(os.Getenv("PORTLESS_PORT")); port != "" {
+		values["PORTLESS_PORT"] = port
+	} else {
+		values["PORTLESS_PORT"] = strconv.Itoa(platform.StoredProxyPort(a.paths.PortlessPort()))
 	}
 	store := a.certificateStore()
 	if store.HasBundle() {
@@ -1134,7 +1144,7 @@ func (a *app) linkWithScope(ctx context.Context, forcedScope string) error {
 	default:
 		return fmt.Errorf("scope must be user or repo")
 	}
-	_, _ = fmt.Fprintln(a.stdout, application.URL())
+	_, _ = fmt.Fprintln(a.stdout, a.applicationURL(application))
 	if len(application.Commands) == 0 {
 		_, _ = fmt.Fprintln(a.stdout, "No run command detected. Add commands in Cassie configuration before running this application.")
 	}

@@ -62,3 +62,7 @@ func (p Paths) Tools() string {
 func (p Paths) Platform() string {
 	return filepath.Join(p.Data, "platform")
 }
+
+func (p Paths) PortlessPort() string {
+	return filepath.Join(p.State, "portless.port")
+}

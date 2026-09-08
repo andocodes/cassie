@@ -29,9 +29,9 @@ cassie
 ```
 
 `cassie up` installs the managed tools, starts Portless and Infisical, and sets
-up a fresh Infisical instance without a browser. Portless reuses its local CA
-but requests elevation each time it starts on port 443. Cassie does not open
-Docker Desktop, OrbStack, or Colima.
+up a fresh Infisical instance without a browser. Cassie selects an available
+Portless port from `1355–1399` and reuses it. Normal starts do not require sudo.
+Cassie does not open Docker Desktop, OrbStack, or Colima.
 
 For unattended first-time setup, provide Infisical's bootstrap variables:
 
@@ -72,20 +72,20 @@ workspace:
   depth: 2
   ignore: [archive]
   groups:
-    atlas: [atlas-api, atlas-ui]
+    product: [api, web]
 
 apps:
-  atlas-ui:
+  web:
     match:
-      repo: github.com/acme/atlas-ui
-    domain: atlas-ui
+      repo: github.com/example/web
+    domain: web
     commands:
       - bun run generate
       - bun run dev
     cleanup:
       - docker compose down
     secrets:
-      project: atlas
+      project: web
 ```
 
 Match apps by Git remote with `match.repo`. Add `match.dir` for a monorepo. Use
@@ -95,8 +95,8 @@ A repository `.cassie.yaml` uses the same app fields without `match`:
 
 ```yaml
 version: 1
-name: atlas-ui
-domain: atlas-ui
+name: web
+domain: web
 port: 3000
 
 commands:
@@ -105,7 +105,7 @@ commands:
     dir: infra
 
 secrets:
-  project: atlas
+  project: web
   environment: dev
   path: /
 
@@ -113,8 +113,8 @@ compose:
   services: [web, worker]
 ```
 
-Set `domain` without `.localhost`. `atlas-ui` becomes
-`https://atlas-ui.localhost`.
+Set `domain` without `.localhost`. `web` becomes
+`https://web.localhost:<proxy-port>`.
 
 ### Precedence
 
@@ -159,7 +159,7 @@ From a directory that contains several repositories, run:
 
 ```bash
 cassie run --all
-cassie run --group atlas
+cassie run --group product
 ```
 
 Cassie scans to `workspace.depth`. It runs selected apps concurrently and
@@ -174,8 +174,12 @@ the background, so large workspaces open without waiting for a full scan.
 `cassie up` installs pinned Portless and Infisical CLI versions in Cassie's data
 directory. It starts the Portless HTTPS proxy and runs Infisical Server,
 PostgreSQL, and Redis through Docker Compose at
-`https://infisical.localhost`. `cassie down` stops all of them and preserves
-their local data.
+`https://infisical.localhost:<proxy-port>`. `cassie down` stops all of them and
+preserves their local data.
+
+Cassie scans ports `1355–1399`, tries up to five available ports in random
+order, and saves the successful port. If none can start, `cassie up` reports the
+attempted ports and exits. Set `PORTLESS_PORT` to require one specific port.
 
 The dashboard uses a per-user local daemon for application processes. The
 daemon stores process metadata and bounded logs in Cassie's state directory.

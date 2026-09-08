@@ -12,7 +12,7 @@ import (
 
 func TestEnvironmentIsCreatedOnceWithPrivatePermissions(t *testing.T) {
 	manager := Manager{DataDir: t.TempDir()}
-	if err := manager.ensureEnvironment(); err != nil {
+	if err := manager.ensureEnvironment(DefaultProxyPort); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(manager.DataDir, ".env")
@@ -20,7 +20,7 @@ func TestEnvironmentIsCreatedOnceWithPrivatePermissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(first), "SITE_URL=https://infisical.localhost") {
+	if !strings.Contains(string(first), "SITE_URL=https://infisical.localhost:1355") {
 		t.Fatalf("unexpected environment: %s", first)
 	}
 	for _, line := range strings.Split(string(first), "\n") {
@@ -35,7 +35,7 @@ func TestEnvironmentIsCreatedOnceWithPrivatePermissions(t *testing.T) {
 	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("environment permissions = %o, want 600", info.Mode().Perm())
 	}
-	if err := manager.ensureEnvironment(); err != nil {
+	if err := manager.ensureEnvironment(DefaultProxyPort); err != nil {
 		t.Fatal(err)
 	}
 	second, _ := os.ReadFile(path)
@@ -52,7 +52,7 @@ func TestLegacyEncryptionKeyIsRepairedWithoutReplacingOtherValues(t *testing.T) 
 		t.Fatal(err)
 	}
 	manager := Manager{DataDir: root}
-	if err := manager.ensureEnvironment(); err != nil {
+	if err := manager.ensureEnvironment(DefaultProxyPort); err != nil {
 		t.Fatal(err)
 	}
 	content, err := os.ReadFile(path)
@@ -66,6 +66,29 @@ func TestLegacyEncryptionKeyIsRepairedWithoutReplacingOtherValues(t *testing.T) 
 		if key, found := strings.CutPrefix(line, "ENCRYPTION_KEY="); found && len(key) != 32 {
 			t.Fatalf("repaired encryption key length = %d, want 32", len(key))
 		}
+	}
+}
+
+func TestEnvironmentUpdatesInfisicalURLWithoutReplacingSecrets(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, ".env")
+	existing := "ENCRYPTION_KEY=0123456789abcdef0123456789abcdef\nPOSTGRES_PASSWORD=keep-me\nSITE_URL=https://infisical.localhost\n"
+	if err := os.WriteFile(path, []byte(existing), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manager := Manager{DataDir: root}
+	if err := manager.ensureEnvironment(1372); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(content), "POSTGRES_PASSWORD=keep-me") {
+		t.Fatalf("environment replaced an existing secret: %s", content)
+	}
+	if !strings.Contains(string(content), "SITE_URL=https://infisical.localhost:1372") {
+		t.Fatalf("environment did not update SITE_URL: %s", content)
 	}
 }
 
@@ -124,7 +147,7 @@ esac
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"login", "--method=user", "--domain=" + InfisicalURL, "--silent"} {
+	for _, want := range []string{"login", "--method=user", "--domain=" + manager.InfisicalURL(), "--silent"} {
 		if !strings.Contains(string(content), want) {
 			t.Fatalf("login command %q does not contain %q", content, want)
 		}
@@ -156,7 +179,7 @@ func TestLoginUsesTerminalFlow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "login --interactive --domain=" + InfisicalURL + "\n"
+	want := "login --interactive --domain=" + manager.InfisicalURL() + "\n"
 	if string(content) != want {
 		t.Fatalf("login command = %q, want %q", content, want)
 	}
