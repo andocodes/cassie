@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -70,6 +71,43 @@ func TestDashboardShowsRunningStateAndReconnectableLogs(t *testing.T) {
 		if !strings.Contains(view, want) {
 			t.Fatalf("dashboard does not include %q:\n%s", want, view)
 		}
+	}
+}
+
+func TestDetectedRepositoriesOpenOnFirstPageAndSupportPaging(t *testing.T) {
+	entries := make([]Entry, 0, 63)
+	for index := range 63 {
+		name := fmt.Sprintf("repository-with-a-long-name-%02d", index)
+		entries = append(entries, Entry{Application: catalog.Application{Name: name, Domain: name, Root: "/work/" + name}})
+	}
+	model := newDashboard(context.Background(), Options{Root: "/work", Entries: entries})
+	_, _ = model.Update(tea.WindowSizeMsg{Width: 100, Height: 20})
+	_, _ = model.Update(key("d"))
+
+	if model.overlay != overlayDetected {
+		t.Fatalf("overlay = %v, want detected", model.overlay)
+	}
+	if model.detected.Paginator.Page != 0 {
+		t.Fatalf("opening detected repositories selected page %d, want 0", model.detected.Paginator.Page)
+	}
+	if !model.detected.ShowPagination() || model.detected.Paginator.TotalPages < 2 {
+		t.Fatalf("pagination = visible %t, pages %d", model.detected.ShowPagination(), model.detected.Paginator.TotalPages)
+	}
+
+	_, _ = model.Update(key("j"))
+	if model.detected.Index() != 1 {
+		t.Fatalf("selection after j = %d, want 1", model.detected.Index())
+	}
+
+	_, _ = model.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+	if model.detected.Paginator.Page != 1 {
+		t.Fatalf("page after PgDown = %d, want 1", model.detected.Paginator.Page)
+	}
+
+	model.detected.GoToStart()
+	_, _ = model.Update(tea.MouseMsg{Button: tea.MouseButtonWheelDown, Action: tea.MouseActionPress})
+	if model.detected.Index() != 3 {
+		t.Fatalf("selection after mouse wheel = %d, want 3", model.detected.Index())
 	}
 }
 

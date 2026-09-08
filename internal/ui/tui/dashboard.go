@@ -184,7 +184,7 @@ func Run(ctx context.Context, options Options) error {
 		return fmt.Errorf("TUI backend is required")
 	}
 	model := newDashboard(ctx, options)
-	result, err := tea.NewProgram(model, tea.WithContext(ctx), tea.WithAltScreen()).Run()
+	result, err := tea.NewProgram(model, tea.WithContext(ctx), tea.WithAltScreen(), tea.WithMouseCellMotion()).Run()
 	if err != nil {
 		return err
 	}
@@ -209,6 +209,7 @@ func newDashboard(ctx context.Context, options Options) *dashboard {
 	}
 	d.list = newList(nil)
 	d.detected = newList(nil)
+	d.detected.SetShowPagination(true)
 	d.logs = viewport.New(40, 10)
 	d.rebuildLists()
 	d.resize()
@@ -254,11 +255,14 @@ func (m *dashboard) refresh() tea.Cmd {
 
 func (m *dashboard) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	var commands []tea.Cmd
+	overlayBefore := m.overlay
 	switch message := message.(type) {
 	case tea.KeyMsg:
 		if command := m.handleKey(message); command != nil {
 			commands = append(commands, command)
 		}
+	case tea.MouseMsg:
+		m.handleMouse(message)
 	case tea.WindowSizeMsg:
 		m.width = max(message.Width, 36)
 		m.height = max(message.Height, 10)
@@ -321,11 +325,11 @@ func (m *dashboard) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.rebuildLists()
 	}
 
-	if m.overlay == overlayDetected {
+	if m.overlay == overlayDetected && overlayBefore == m.overlay {
 		var command tea.Cmd
 		m.detected, command = m.detected.Update(message)
 		commands = append(commands, command)
-	} else if m.overlay == overlayNone {
+	} else if m.overlay == overlayNone && overlayBefore == m.overlay {
 		before := m.selectedKey()
 		var command tea.Cmd
 		m.list, command = m.list.Update(message)
@@ -336,6 +340,23 @@ func (m *dashboard) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	m.resize()
 	return m, tea.Batch(commands...)
+}
+
+func (m *dashboard) handleMouse(message tea.MouseMsg) {
+	if m.overlay != overlayDetected {
+		return
+	}
+	const wheelRows = 3
+	switch message.Button {
+	case tea.MouseButtonWheelUp:
+		for range wheelRows {
+			m.detected.CursorUp()
+		}
+	case tea.MouseButtonWheelDown:
+		for range wheelRows {
+			m.detected.CursorDown()
+		}
+	}
 }
 
 func (m *dashboard) handleKey(message tea.KeyMsg) tea.Cmd {
@@ -692,9 +713,10 @@ func applicationKey(name, root string) string { return name + "\x00" + filepath.
 
 func (m *dashboard) resize() {
 	bodyHeight := max(m.height-4, 6)
+	overlayWidth := min(max(m.width-12, 28), 88)
 	if m.width < 72 {
 		m.list.SetSize(max(m.width-4, 12), max(bodyHeight-2, 4))
-		m.detected.SetSize(max(m.width-10, 12), max(bodyHeight-10, 4))
+		m.detected.SetSize(overlayWidth, max(bodyHeight-10, 4))
 		m.logs.Width = max(m.width-6, 12)
 		m.logs.Height = max(bodyHeight-8, 3)
 		return
@@ -702,7 +724,7 @@ func (m *dashboard) resize() {
 	leftWidth := min(40, max(28, m.width/3))
 	rightWidth := max(m.width-leftWidth-4, 28)
 	m.list.SetSize(max(leftWidth-4, 12), max(bodyHeight-2, 4))
-	m.detected.SetSize(max(m.width-14, 12), max(bodyHeight-10, 4))
+	m.detected.SetSize(overlayWidth, max(bodyHeight-10, 4))
 	m.logs.Width = max(rightWidth-4, 12)
 	m.logs.Height = max(bodyHeight-9, 3)
 }
@@ -843,6 +865,13 @@ func (m *dashboard) footer() string {
 	if m.overlay != overlayNone {
 		if m.overlay == overlayTrust {
 			return footerStyle.Render("t trust + run   esc close")
+		}
+		if m.overlay == overlayDetected {
+			keys := "↑/↓ or j/k scroll   PgUp/PgDn page   / filter   esc close"
+			if m.width < 60 {
+				keys = "↑/↓ scroll   / filter   esc close"
+			}
+			return footerStyle.MaxWidth(m.width).Render(keys)
 		}
 		return footerStyle.Render("esc close")
 	}
