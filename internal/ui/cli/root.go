@@ -665,16 +665,81 @@ func (a *app) upCommand() *cobra.Command {
 			if noLogin || manager.LoginStatus(command.Context()) {
 				return nil
 			}
-			if input, ok := a.stdin.(*os.File); !ok || !interactive(input) {
-				_, _ = fmt.Fprintln(a.stdout, "Run cassie up from an interactive terminal to finish Infisical login.")
+			initialized, err := manager.Initialized(command.Context())
+			if err != nil {
+				return err
+			}
+			if !initialized {
+				credentials, err := a.infisicalBootstrapCredentials(command.Context())
+				if err != nil {
+					return err
+				}
+				_, _ = fmt.Fprintln(a.stdout, "Setting up the local Infisical instance…")
+				if err := manager.Bootstrap(command.Context(), credentials); err != nil {
+					return err
+				}
+				_, _ = fmt.Fprintln(a.stdout, passStyle.Render("Ready"), "Infisical is initialized and authenticated.")
 				return nil
 			}
-			_, _ = fmt.Fprintln(a.stdout, "Infisical needs authentication; Cassie will use the local instance automatically.")
+			if input, ok := a.stdin.(*os.File); !ok || !interactive(input) {
+				_, _ = fmt.Fprintln(a.stdout, "Run cassie up from an interactive terminal to sign in to Infisical.")
+				return nil
+			}
+			_, _ = fmt.Fprintln(a.stdout, "Enter your local Infisical credentials.")
 			return manager.Login(command.Context())
 		},
 	}
 	command.Flags().BoolVar(&noLogin, "no-login", false, "start the platform without checking Infisical login")
 	return command
+}
+
+func (a *app) infisicalBootstrapCredentials(ctx context.Context) (platform.BootstrapCredentials, error) {
+	credentials := platform.BootstrapCredentials{
+		Email:        strings.TrimSpace(os.Getenv("INFISICAL_ADMIN_EMAIL")),
+		Password:     os.Getenv("INFISICAL_ADMIN_PASSWORD"),
+		Organization: strings.TrimSpace(os.Getenv("INFISICAL_ADMIN_ORGANIZATION")),
+	}
+	if credentials.Email != "" && credentials.Password != "" && credentials.Organization != "" {
+		return credentials, nil
+	}
+	input, ok := a.stdin.(*os.File)
+	if !ok || !interactive(input) {
+		return platform.BootstrapCredentials{}, fmt.Errorf("fresh Infisical setup requires INFISICAL_ADMIN_EMAIL, INFISICAL_ADMIN_PASSWORD, and INFISICAL_ADMIN_ORGANIZATION")
+	}
+	if credentials.Email == "" {
+		credentials.Email = gitEmail(ctx)
+	}
+	if credentials.Organization == "" {
+		credentials.Organization = "Cassie"
+	}
+	fields := []huh.Field{
+		huh.NewInput().Title("Admin email").Value(&credentials.Email).Validate(required("admin email")),
+		huh.NewInput().Title("Organization").Value(&credentials.Organization).Validate(required("organization")),
+	}
+	if credentials.Password == "" {
+		fields = append(fields, huh.NewInput().Title("Admin password").EchoMode(huh.EchoModePassword).Value(&credentials.Password).Validate(minimumLength("admin password", 14)))
+	}
+	if err := huh.NewForm(huh.NewGroup(fields...)).RunWithContext(ctx); err != nil {
+		return platform.BootstrapCredentials{}, err
+	}
+	return credentials, nil
+}
+
+func gitEmail(ctx context.Context) string {
+	output, err := exec.CommandContext(ctx, "git", "config", "--global", "user.email").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(output))
+}
+
+func minimumLength(name string, length int) func(string) error {
+	return func(value string) error {
+		if len(value) < length {
+			return fmt.Errorf("%s must be at least %d characters", name, length)
+		}
+		return nil
+	}
 }
 
 func (a *app) downCommand() *cobra.Command {

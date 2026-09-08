@@ -1,6 +1,8 @@
 package platform
 
 import (
+	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -73,5 +75,89 @@ func TestComposePinsInfisicalAndBindsToLoopback(t *testing.T) {
 	}
 	if !strings.Contains(composeFile, `127.0.0.1:4080:8080`) {
 		t.Fatal("Infisical must only bind to loopback")
+	}
+}
+
+func TestBootstrapCreatesAndStoresAUserSessionWithoutBrowser(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX fake executable")
+	}
+	tools := t.TempDir()
+	bin := filepath.Join(tools, "node_modules", ".bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	calls := filepath.Join(t.TempDir(), "calls")
+	script := `#!/bin/sh
+case "$1" in
+  bootstrap)
+    [ "$INFISICAL_ADMIN_EMAIL" = "admin@example.com" ] || exit 11
+    [ "$INFISICAL_ADMIN_PASSWORD" = "correct horse battery" ] || exit 12
+    [ "$INFISICAL_ADMIN_ORGANIZATION" = "Cassie" ] || exit 13
+    printf '{"organization":{"id":"org-123"},"identity":{"credentials":{"token":"do-not-persist"}}}'
+    ;;
+  login)
+    [ "$INFISICAL_EMAIL" = "admin@example.com" ] || exit 21
+    [ "$INFISICAL_PASSWORD" = "correct horse battery" ] || exit 22
+    [ "$INFISICAL_ORGANIZATION_ID" = "org-123" ] || exit 23
+    printf '%s\n' "$*" > "$CASSIE_CALLS"
+    ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(bin, "infisical"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manager := Manager{
+		Tools:  tools,
+		Stderr: io.Discard,
+		Env:    map[string]string{"CASSIE_CALLS": calls},
+	}
+	credentials := BootstrapCredentials{
+		Email:        "admin@example.com",
+		Password:     "correct horse battery",
+		Organization: "Cassie",
+	}
+	if err := manager.Bootstrap(context.Background(), credentials); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(calls)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"login", "--method=user", "--domain=" + InfisicalURL, "--silent"} {
+		if !strings.Contains(string(content), want) {
+			t.Fatalf("login command %q does not contain %q", content, want)
+		}
+	}
+	if strings.Contains(string(content), "do-not-persist") {
+		t.Fatal("bootstrap identity token was passed to the login command")
+	}
+}
+
+func TestLoginUsesTerminalFlow(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX fake executable")
+	}
+	tools := t.TempDir()
+	bin := filepath.Join(tools, "node_modules", ".bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	calls := filepath.Join(t.TempDir(), "calls")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" > \"$CASSIE_CALLS\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "infisical"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manager := Manager{Tools: tools, Env: map[string]string{"CASSIE_CALLS": calls}}
+	if err := manager.Login(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(calls)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "login --interactive --domain=" + InfisicalURL + "\n"
+	if string(content) != want {
+		t.Fatalf("login command = %q, want %q", content, want)
 	}
 }

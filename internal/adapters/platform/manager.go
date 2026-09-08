@@ -1,9 +1,11 @@
 package platform
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -33,6 +35,18 @@ type Manager struct {
 	Stderr         io.Writer
 	Env            map[string]string
 	NonInteractive bool
+}
+
+type BootstrapCredentials struct {
+	Email        string
+	Password     string
+	Organization string
+}
+
+type bootstrapResponse struct {
+	Organization struct {
+		ID string `json:"id"`
+	} `json:"organization"`
 }
 
 func (m Manager) InstallTools(ctx context.Context) error {
@@ -147,13 +161,90 @@ func (m Manager) LoginStatus(ctx context.Context) bool {
 }
 
 func (m Manager) Login(ctx context.Context) error {
-	command := exec.CommandContext(ctx, m.Binary("infisical"), "login", "--domain="+InfisicalURL)
+	command := exec.CommandContext(ctx, m.Binary("infisical"), "login", "--interactive", "--domain="+InfisicalURL)
 	command.Stdin = m.Stdin
 	command.Stdout = m.Stdout
 	command.Stderr = m.Stderr
 	command.Env = append(m.environment(), "INFISICAL_API_URL="+InfisicalURL+"/api")
 	if err := command.Run(); err != nil {
 		return fmt.Errorf("log in to Infisical: %w", err)
+	}
+	return nil
+}
+
+func (m Manager) Initialized(ctx context.Context) (bool, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://127.0.0.1:"+strconv.Itoa(infisicalPort)+"/api/v1/admin/config", nil)
+	if err != nil {
+		return false, fmt.Errorf("create Infisical configuration request: %w", err)
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	response, err := client.Do(request)
+	if err != nil {
+		return false, fmt.Errorf("read Infisical configuration: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return false, fmt.Errorf("read Infisical configuration: unexpected status %s", response.Status)
+	}
+	var payload struct {
+		Config struct {
+			Initialized bool `json:"initialized"`
+		} `json:"config"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		return false, fmt.Errorf("decode Infisical configuration: %w", err)
+	}
+	return payload.Config.Initialized, nil
+}
+
+func (m Manager) Bootstrap(ctx context.Context, credentials BootstrapCredentials) error {
+	if strings.TrimSpace(credentials.Email) == "" || strings.TrimSpace(credentials.Password) == "" || strings.TrimSpace(credentials.Organization) == "" {
+		return fmt.Errorf("Infisical bootstrap requires an email, password, and organization")
+	}
+	var output bytes.Buffer
+	command := exec.CommandContext(ctx, m.Binary("infisical"), "bootstrap", "--domain="+InfisicalURL, "--silent", "--telemetry=false")
+	command.Stdout = &output
+	command.Stderr = m.Stderr
+	command.Env = append(m.environment(),
+		"INFISICAL_ADMIN_EMAIL="+credentials.Email,
+		"INFISICAL_ADMIN_PASSWORD="+credentials.Password,
+		"INFISICAL_ADMIN_ORGANIZATION="+credentials.Organization,
+	)
+	if err := command.Run(); err != nil {
+		return fmt.Errorf("bootstrap Infisical: %w", err)
+	}
+	payload := output.Bytes()
+	defer func() {
+		for index := range payload {
+			payload[index] = 0
+		}
+	}()
+	var response bootstrapResponse
+	if err := json.Unmarshal(payload, &response); err != nil {
+		return fmt.Errorf("decode Infisical bootstrap response: %w", err)
+	}
+	if response.Organization.ID == "" {
+		return fmt.Errorf("Infisical bootstrap response did not include an organization ID")
+	}
+	return m.loginWithCredentials(ctx, credentials.Email, credentials.Password, response.Organization.ID)
+}
+
+func (m Manager) loginWithCredentials(ctx context.Context, email, password, organizationID string) error {
+	var diagnostics bytes.Buffer
+	command := exec.CommandContext(ctx, m.Binary("infisical"), "login", "--method=user", "--domain="+InfisicalURL, "--silent", "--telemetry=false")
+	command.Stdout = &diagnostics
+	command.Stderr = &diagnostics
+	command.Env = append(m.environment(),
+		"INFISICAL_EMAIL="+email,
+		"INFISICAL_PASSWORD="+password,
+		"INFISICAL_ORGANIZATION_ID="+organizationID,
+	)
+	if err := command.Run(); err != nil {
+		detail := strings.TrimSpace(diagnostics.String())
+		if detail != "" {
+			return fmt.Errorf("log in to bootstrapped Infisical: %w: %s", err, detail)
+		}
+		return fmt.Errorf("log in to bootstrapped Infisical: %w", err)
 	}
 	return nil
 }

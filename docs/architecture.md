@@ -44,6 +44,11 @@ Command handlers change state. Query handlers read configuration and sessions.
 For a dynamic port, Portless wraps the last command and supplies `PORT`. For a
 fixed port, Cassie creates and later removes an explicit route.
 
+On a fresh managed Infisical instance, `cassie up` uses Infisical's bootstrap
+API through the bundled CLI. It creates the first administrator and
+organization, then signs in directly. Infisical stores the resulting session in
+its credential vault. Cassie does not retain the password or bootstrap token.
+
 ## Dashboard and daemon
 
 ```text

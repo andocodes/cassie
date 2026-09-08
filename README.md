@@ -28,10 +28,24 @@ cassie link
 cassie
 ```
 
-`cassie up` installs the managed tools, starts Portless and Infisical, and
-handles Infisical login. Portless reuses its local CA but requests elevation
-each time it starts on port 443. Cassie does not open Docker Desktop, OrbStack,
-or Colima.
+`cassie up` installs the managed tools, starts Portless and Infisical, and sets
+up a fresh Infisical instance without a browser. Portless reuses its local CA
+but requests elevation each time it starts on port 443. Cassie does not open
+Docker Desktop, OrbStack, or Colima.
+
+For unattended first-time setup, provide Infisical's bootstrap variables:
+
+```bash
+export INFISICAL_ADMIN_EMAIL=you@example.com
+export INFISICAL_ADMIN_PASSWORD='use-a-password-manager'
+export INFISICAL_ADMIN_ORGANIZATION=Personal
+cassie up
+unset INFISICAL_ADMIN_PASSWORD
+```
+
+Without these variables, `cassie up` asks for the same values in the terminal.
+It sends the password only to Infisical and lets the Infisical CLI store the
+resulting session in the system credential vault.
 
 `cassie link` stores app configuration in `~/.config/cassie/config.yaml`. It
 does not change the repository. Use `cassie link --repo` to create a shared
