@@ -1142,11 +1142,11 @@ func linkCandidate(ctx context.Context, dir string) (ports.Repository, catalog.A
 }
 
 func userLinkMatch(repository ports.Repository, dir string) config.Match {
-	match := config.Match{Repo: repository.Remote}
-	if repository.Remote == "" {
-		match.Path = dir
-	} else if relative, err := filepath.Rel(repository.Root, dir); err == nil {
-		match.Dir = relative
+	match := config.Match{Repo: repository.Remote, Path: dir}
+	if repository.Remote != "" {
+		if relative, err := filepath.Rel(repository.Root, dir); err == nil {
+			match.Dir = relative
+		}
 	}
 	return match
 }

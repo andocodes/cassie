@@ -192,6 +192,17 @@ func (b *dashboardBackend) Link(ctx context.Context, entry tui.Entry) ([]tui.Ent
 	if err != nil {
 		return nil, err
 	}
+	if name := strings.TrimSpace(entry.Application.Name); name != "" {
+		application.Name = name
+		application.Domain = ""
+		application, err = application.Normalized()
+		if err != nil {
+			return nil, err
+		}
+		if err := application.Validate(); err != nil {
+			return nil, err
+		}
+	}
 	writer := config.Writer{UserPath: b.owner.configPath}
 	if err := writer.SaveUser(application.Name, userLinkMatch(repository, application.Root), application); err != nil {
 		return nil, err

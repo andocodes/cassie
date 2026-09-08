@@ -31,6 +31,7 @@ func (b *linkingBackend) WatchLogs(context.Context, string, int64) ([]byte, <-ch
 func (b *linkingBackend) Link(_ context.Context, entry Entry) ([]Entry, error) {
 	b.linked = entry
 	entry.Linked = true
+	entry.Application.Domain = catalog.SuggestedDomain(entry.Application.Name)
 	entry.Application.Commands = []catalog.Command{{Run: "pnpm dev"}}
 	return []Entry{entry}, nil
 }
@@ -173,22 +174,32 @@ func TestDetectedRepositoriesSearchButtonAndEnterLinkSelection(t *testing.T) {
 
 	model.detected.ResetFilter()
 	command := model.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if command == nil || model.overlay != overlayLink {
+		t.Fatal("Enter did not open the repository name prompt")
+	}
+	view := ansi.Strip(model.View())
+	if !strings.Contains(view, "LINK REPOSITORY") || !strings.Contains(view, "https://phoebe-ui.localhost") {
+		t.Fatalf("link prompt is incomplete:\n%s", view)
+	}
+
+	model.linkName.SetValue("phoebe")
+	command = model.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	if command == nil {
-		t.Fatal("Enter did not start linking the selected repository")
+		t.Fatal("Enter did not confirm the repository link")
 	}
 	message, ok := command().(linkMsg)
 	if !ok {
 		t.Fatalf("link command returned %T, want linkMsg", command())
 	}
 	_, _ = model.Update(message)
-	if backend.linked.Application.Root != entry.Application.Root {
-		t.Fatalf("linked root = %q, want %q", backend.linked.Application.Root, entry.Application.Root)
+	if backend.linked.Application.Root != entry.Application.Root || backend.linked.Application.Name != "phoebe" {
+		t.Fatalf("linked entry = %#v", backend.linked)
 	}
 	if model.overlay != overlayNone {
 		t.Fatalf("overlay = %v after link, want closed", model.overlay)
 	}
 	linked, ok := model.selectedEntry()
-	if !ok || !linked.Linked || linked.Application.Name != entry.Application.Name {
+	if !ok || !linked.Linked || linked.Application.Name != "phoebe" || linked.Application.URL() != "https://phoebe.localhost" {
 		t.Fatalf("selected linked entry = %#v, exists %t", linked, ok)
 	}
 }

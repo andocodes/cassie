@@ -47,9 +47,9 @@ Without these variables, `cassie up` asks for the same values in the terminal.
 It sends the password only to Infisical and lets the Infisical CLI store the
 resulting session in the system credential vault.
 
-`cassie link` stores app configuration in `~/.config/cassie/config.yaml`. It
-does not change the repository. Use `cassie link --repo` to create a shared
-`.cassie.yaml`.
+`cassie link` stores app configuration for the current checkout in
+`~/.config/cassie/config.yaml`. It does not change the repository. Use
+`cassie link --repo` to create a shared `.cassie.yaml`.
 
 Run `cassie` without a subcommand to open the workspace dashboard. Use `r` to
 run an app, `s` to stop it, `o` to open its URL, and `/` to filter. Apps keep
@@ -166,8 +166,9 @@ Cassie scans to `workspace.depth`. It runs selected apps concurrently and
 prefixes their output with the app name. A failure stops the other apps.
 
 The dashboard shows linked apps first. Press `d` to inspect other detected
-repositories. Cassie caches the workspace index in SQLite and refreshes it in
-the background, so large workspaces open without waiting for a full scan.
+repositories, then press Enter to choose an app name and link one. Cassie
+caches the workspace index in SQLite and refreshes it in the background, so
+large workspaces open without waiting for a full scan.
 
 ## Platform and trust
 

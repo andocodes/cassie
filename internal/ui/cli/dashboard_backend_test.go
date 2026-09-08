@@ -13,6 +13,7 @@ import (
 	"github.com/andocodes/cassie/internal/adapters/system"
 	"github.com/andocodes/cassie/internal/domain/catalog"
 	runtimeDomain "github.com/andocodes/cassie/internal/domain/runtime"
+	"github.com/andocodes/cassie/internal/ports"
 	"github.com/andocodes/cassie/internal/ui/tui"
 )
 
@@ -123,7 +124,7 @@ func TestDashboardLinksDetectedRepositoryInUserConfiguration(t *testing.T) {
 	}, root, &recordingDaemon{})
 
 	entries, err := backend.Link(context.Background(), tui.Entry{Application: catalog.Application{
-		Name: "example", Root: root, Domain: "example",
+		Name: "web", Root: root,
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -131,11 +132,22 @@ func TestDashboardLinksDetectedRepositoryInUserConfiguration(t *testing.T) {
 	if len(entries) != 1 || !entries[0].Linked {
 		t.Fatalf("linked entries = %#v", entries)
 	}
+	if entries[0].Application.Name != "web" || entries[0].Application.URL() != "https://web.localhost" {
+		t.Fatalf("customized application = %#v", entries[0].Application)
+	}
 	commands := entries[0].Application.Commands
 	if len(commands) != 1 || commands[0].Run != "pnpm dev" {
 		t.Fatalf("inferred commands = %#v", commands)
 	}
 	if _, err := os.Stat(configPath); err != nil {
 		t.Fatalf("user configuration was not written: %v", err)
+	}
+}
+
+func TestUserLinkMatchPinsARepositoryCheckout(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "checkout")
+	match := userLinkMatch(ports.Repository{Root: root, Remote: "github.com/acme/example"}, root)
+	if match.Repo != "github.com/acme/example" || match.Path != root {
+		t.Fatalf("user link match = %#v", match)
 	}
 }

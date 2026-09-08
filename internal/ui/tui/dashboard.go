@@ -12,6 +12,7 @@ import (
 	runtimeDomain "github.com/andocodes/cassie/internal/domain/runtime"
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/paginator"
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -94,7 +95,7 @@ func (rowDelegate) Render(writer io.Writer, model list.Model, index int, value l
 		rowWidth = max(rowWidth-selectedStyle.GetHorizontalPadding(), 4)
 	}
 	indicator, indicatorStyle := stateIndicator(row.state)
-	name := truncate(row.entry.Application.Name, max(rowWidth-lipgloss.Width(row.state)-5, 4))
+	name := truncateMiddle(row.entry.Application.Name, max(rowWidth-lipgloss.Width(row.state)-5, 4))
 	gap := max(rowWidth-lipgloss.Width(indicator)-lipgloss.Width(name)-lipgloss.Width(row.state)-3, 1)
 	if selected {
 		line := "■ " + name + strings.Repeat(" ", gap) + row.state
@@ -111,6 +112,7 @@ type overlay int
 const (
 	overlayNone overlay = iota
 	overlayDetected
+	overlayLink
 	overlayPlatform
 	overlayHelp
 	overlayTrust
@@ -123,6 +125,7 @@ type dashboard struct {
 	entries    []Entry
 	list       list.Model
 	detected   list.Model
+	linkName   textinput.Model
 	processes  map[string]runtimeDomain.Process
 	busy       map[string]string
 	platform   Platform
@@ -131,6 +134,7 @@ type dashboard struct {
 	logID      string
 	logCancel  context.CancelFunc
 	logFollow  bool
+	linking    bool
 	overlay    overlay
 	pending    *Entry
 	notice     string
@@ -227,6 +231,9 @@ func newDashboard(ctx context.Context, options Options) *dashboard {
 	d.detected = newList(nil)
 	d.detected.SetShowPagination(true)
 	d.detected.Paginator.Type = paginator.Arabic
+	d.linkName = textinput.New()
+	d.linkName.Prompt = "> "
+	d.linkName.CharLimit = 80
 	d.logs = viewport.New(40, 10)
 	d.rebuildLists()
 	d.resize()
@@ -343,12 +350,15 @@ func (m *dashboard) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.rebuildLists()
 	case linkMsg:
-		delete(m.busy, entryKey(message.entry))
+		m.linking = false
 		if message.err != nil {
 			m.notice = "Link: " + message.err.Error()
+			commands = append(commands, m.linkName.Focus())
 		} else {
 			m.entries = message.entries
 			m.overlay = overlayNone
+			m.pending = nil
+			m.linkName.Blur()
 			m.notice = message.entry.Application.Name + " linked"
 			m.rebuildLists()
 			m.selectLinked(message.entry)
@@ -417,10 +427,39 @@ func (m *dashboard) handleKey(message tea.KeyMsg) tea.Cmd {
 			if !ok {
 				return nil
 			}
+			m.pending = &entry
 			m.notice = ""
-			m.busy[entryKey(entry)] = "linking"
-			m.rebuildLists()
-			return m.link(entry)
+			m.linkName.SetValue("")
+			m.linkName.Placeholder = entry.Application.Name
+			m.linkName.Focus()
+			m.overlay = overlayLink
+			return textinput.Blink
+		}
+		if m.overlay == overlayLink {
+			switch key {
+			case "esc":
+				m.linkName.Blur()
+				m.overlay = overlayDetected
+				m.pending = nil
+				m.notice = ""
+				return nil
+			case "enter":
+				if m.pending == nil || m.linking {
+					return nil
+				}
+				entry := *m.pending
+				if name := strings.TrimSpace(m.linkName.Value()); name != "" {
+					entry.Application.Name = name
+				}
+				m.notice = ""
+				m.linking = true
+				m.linkName.Blur()
+				return m.link(entry)
+			default:
+				var command tea.Cmd
+				m.linkName, command = m.linkName.Update(message)
+				return command
+			}
 		}
 		switch key {
 		case "esc", "q", "p", "d", "?":
@@ -788,6 +827,7 @@ func (m *dashboard) resize() {
 	bodyHeight := max(m.height-4, 6)
 	overlayWidth := min(max(m.width-12, 28), 88)
 	overlayContentWidth := max(overlayWidth-overlayStyle.GetHorizontalPadding(), 12)
+	m.linkName.Width = max(overlayContentWidth-2, 10)
 	if m.width < 72 {
 		m.list.SetSize(max(m.width-4, 12), max(bodyHeight-2, 4))
 		m.detected.SetSize(overlayContentWidth, max(bodyHeight-10, 4))
@@ -905,6 +945,26 @@ func (m *dashboard) renderOverlay(height int) string {
 				content += "\n" + warningStyle.Render(wrap(m.notice, width-4))
 			}
 		}
+	case overlayLink:
+		title = "LINK REPOSITORY"
+		if m.pending != nil {
+			name := strings.TrimSpace(m.linkName.Value())
+			if name == "" {
+				name = m.pending.Application.Name
+			}
+			content = strings.Join([]string{
+				mutedStyle.Render(truncate(m.pending.Application.Root, width-4)),
+				"",
+				"Name",
+				m.linkName.View(),
+				mutedStyle.Render(truncate("URL  https://"+catalog.SuggestedDomain(name)+".localhost", width-4)),
+			}, "\n")
+			if m.linking {
+				content += "\n\n" + warningStyle.Render("Linking…")
+			} else if m.notice != "" {
+				content += "\n\n" + warningStyle.Render(wrap(m.notice, width-4))
+			}
+		}
 	case overlayPlatform:
 		title = "PLATFORM"
 		content = platformLabel(m.platform) + "\n\n" + wrap(m.platform.Detail, width-4)
@@ -949,6 +1009,9 @@ func (m *dashboard) footer() string {
 				keys = detectedSearchButton() + "  enter link   ↑/↓ scroll   esc close"
 			}
 			return footerStyle.MaxWidth(m.width).Render(keys)
+		}
+		if m.overlay == overlayLink {
+			return footerStyle.Render("enter link   esc back")
 		}
 		return footerStyle.Render("esc close")
 	}
@@ -1014,6 +1077,29 @@ func truncate(value string, width int) string {
 		runes = runes[:len(runes)-1]
 	}
 	return string(runes) + "…"
+}
+
+func truncateMiddle(value string, width int) string {
+	if width <= 0 || lipgloss.Width(value) <= width {
+		return value
+	}
+	if width == 1 {
+		return "…"
+	}
+	runes := []rune(value)
+	leftWidth := (width - 1) / 2
+	rightWidth := width - leftWidth - 1
+	left := truncate(string(runes), leftWidth)
+	left = strings.TrimSuffix(left, "…")
+	right := ""
+	for index := len(runes) - 1; index >= 0; index-- {
+		candidate := string(runes[index:])
+		if lipgloss.Width(candidate) > rightWidth {
+			break
+		}
+		right = candidate
+	}
+	return left + "…" + right
 }
 
 func wrap(value string, width int) string {
