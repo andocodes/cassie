@@ -16,6 +16,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 const (
@@ -204,7 +205,7 @@ func Run(ctx context.Context, options Options) error {
 		return fmt.Errorf("TUI backend is required")
 	}
 	model := newDashboard(ctx, options)
-	result, err := tea.NewProgram(model, tea.WithContext(ctx), tea.WithAltScreen(), tea.WithMouseCellMotion()).Run()
+	result, err := tea.NewProgram(model, tea.WithContext(ctx), tea.WithAltScreen()).Run()
 	if err != nil {
 		return err
 	}
@@ -362,7 +363,7 @@ func (m *dashboard) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.notice = message.entry.Application.Name + " linked"
 			m.rebuildLists()
 			m.selectLinked(message.entry)
-			commands = append(commands, m.watchSelectedLog())
+			commands = append(commands, tea.DisableMouse, m.watchSelectedLog())
 		}
 	}
 
@@ -433,7 +434,7 @@ func (m *dashboard) handleKey(message tea.KeyMsg) tea.Cmd {
 			m.linkName.Placeholder = entry.Application.Name
 			m.linkName.Focus()
 			m.overlay = overlayLink
-			return textinput.Blink
+			return tea.Batch(textinput.Blink, tea.DisableMouse)
 		}
 		if m.overlay == overlayLink {
 			switch key {
@@ -442,7 +443,7 @@ func (m *dashboard) handleKey(message tea.KeyMsg) tea.Cmd {
 				m.overlay = overlayDetected
 				m.pending = nil
 				m.notice = ""
-				return nil
+				return tea.EnableMouseCellMotion
 			case "enter":
 				if m.pending == nil || m.linking {
 					return nil
@@ -463,8 +464,12 @@ func (m *dashboard) handleKey(message tea.KeyMsg) tea.Cmd {
 		}
 		switch key {
 		case "esc", "q", "p", "d", "?":
+			wasDetected := m.overlay == overlayDetected
 			m.overlay = overlayNone
 			m.pending = nil
+			if wasDetected {
+				return tea.DisableMouse
+			}
 		case "u":
 			if m.overlay == overlayPlatform {
 				m.platform = Platform{State: PlatformChecking, Detail: "Checking Docker and Cassie services"}
@@ -487,6 +492,7 @@ func (m *dashboard) handleKey(message tea.KeyMsg) tea.Cmd {
 		m.overlay = overlayPlatform
 	case "d":
 		m.overlay = overlayDetected
+		return tea.EnableMouseCellMotion
 	case "?":
 		m.overlay = overlayHelp
 	case "tab":
@@ -908,7 +914,7 @@ func (m *dashboard) detail(width, height int) string {
 	status := stateStyle(state).Render(strings.ToUpper(state))
 	lines := []string{
 		titleStyle.Render(app.Name) + "  " + status,
-		linkStyle.Render(app.URL()),
+		terminalLink(linkStyle.Render(app.URL()), app.URL()),
 		mutedStyle.Render(app.Root),
 	}
 	if m.notice != "" {
@@ -952,12 +958,14 @@ func (m *dashboard) renderOverlay(height int) string {
 			if name == "" {
 				name = m.pending.Application.Name
 			}
+			url := "https://" + catalog.SuggestedDomain(name) + ".localhost"
+			urlLabel := truncate(url, width-9)
 			content = strings.Join([]string{
 				mutedStyle.Render(truncate(m.pending.Application.Root, width-4)),
 				"",
 				"Name",
 				m.linkName.View(),
-				mutedStyle.Render(truncate("URL  https://"+catalog.SuggestedDomain(name)+".localhost", width-4)),
+				mutedStyle.Render("URL  ") + terminalLink(linkStyle.Render(urlLabel), url),
 			}, "\n")
 			if m.linking {
 				content += "\n\n" + warningStyle.Render("Linking…")
@@ -1100,6 +1108,10 @@ func truncateMiddle(value string, width int) string {
 		right = candidate
 	}
 	return left + "…" + right
+}
+
+func terminalLink(label, url string) string {
+	return ansi.SetHyperlink(url) + label + ansi.ResetHyperlink()
 }
 
 func wrap(value string, width int) string {

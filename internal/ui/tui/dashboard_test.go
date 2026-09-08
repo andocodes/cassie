@@ -74,6 +74,9 @@ func TestDashboardUsesDenseWorkspaceLayout(t *testing.T) {
 			t.Fatalf("dashboard includes obsolete menu item %q:\n%s", unwanted, view)
 		}
 	}
+	if !strings.Contains(view, ansi.SetHyperlink("https://phoebe-ui.localhost")) {
+		t.Fatalf("dashboard URL is not a terminal hyperlink:\n%s", view)
+	}
 	for _, line := range strings.Split(view, "\n") {
 		if width := lipgloss.Width(line); width > model.width {
 			t.Fatalf("rendered line width = %d, want <= %d:\n%s", width, model.width, line)
