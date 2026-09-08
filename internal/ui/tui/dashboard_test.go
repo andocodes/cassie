@@ -14,6 +14,33 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
+type linkingBackend struct {
+	linked Entry
+}
+
+func (b *linkingBackend) Refresh(context.Context) ([]Entry, error) { return nil, nil }
+func (b *linkingBackend) EnsurePlatform(context.Context) Platform {
+	return Platform{State: PlatformReady}
+}
+func (b *linkingBackend) WatchProcesses(context.Context, int) ([]runtimeDomain.Process, <-chan runtimeDomain.ProcessEvent, <-chan error, error) {
+	return nil, make(chan runtimeDomain.ProcessEvent), make(chan error), nil
+}
+func (b *linkingBackend) WatchLogs(context.Context, string, int64) ([]byte, <-chan []byte, <-chan error, error) {
+	return nil, make(chan []byte), make(chan error), nil
+}
+func (b *linkingBackend) Link(_ context.Context, entry Entry) ([]Entry, error) {
+	b.linked = entry
+	entry.Linked = true
+	entry.Application.Commands = []catalog.Command{{Run: "pnpm dev"}}
+	return []Entry{entry}, nil
+}
+func (b *linkingBackend) Start(context.Context, Entry) (runtimeDomain.Process, error) {
+	return runtimeDomain.Process{}, nil
+}
+func (b *linkingBackend) Stop(context.Context, string) error { return nil }
+func (b *linkingBackend) Trust(context.Context, Entry) error { return nil }
+func (b *linkingBackend) Open(context.Context, string) error { return nil }
+
 func TestDashboardSeparatesLinkedApplicationsFromDetectedRepositories(t *testing.T) {
 	items, linked, detected := dashboardItems([]Entry{
 		{Application: catalog.Application{Name: "phoebe-ui", Domain: "phoebe-ui", Commands: []catalog.Command{{Run: "pnpm dev"}}}, Linked: true},
@@ -124,6 +151,45 @@ func TestDetectedRepositoriesOpenOnFirstPageAndSupportPaging(t *testing.T) {
 	model.detected.GoToEnd()
 	if view := ansi.Strip(model.View()); !strings.Contains(view, "repository-with-a-long-name-62") {
 		t.Fatalf("last detected repository is not visible:\n%s", view)
+	}
+}
+
+func TestDetectedRepositoriesSearchButtonAndEnterLinkSelection(t *testing.T) {
+	entry := Entry{Application: catalog.Application{Name: "phoebe-ui", Domain: "phoebe-ui", Root: "/work/phoebe-ui"}}
+	backend := &linkingBackend{}
+	model := newDashboard(context.Background(), Options{Root: "/work", Entries: []Entry{entry}, Backend: backend})
+	_, _ = model.Update(tea.WindowSizeMsg{Width: 100, Height: 20})
+	_, _ = model.Update(key("d"))
+
+	_, _ = model.Update(tea.MouseMsg{
+		Button: tea.MouseButtonLeft,
+		Action: tea.MouseActionPress,
+		X:      1,
+		Y:      model.height - 1,
+	})
+	if !model.detected.SettingFilter() {
+		t.Fatal("clicking Search did not open the repository filter")
+	}
+
+	model.detected.ResetFilter()
+	command := model.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if command == nil {
+		t.Fatal("Enter did not start linking the selected repository")
+	}
+	message, ok := command().(linkMsg)
+	if !ok {
+		t.Fatalf("link command returned %T, want linkMsg", command())
+	}
+	_, _ = model.Update(message)
+	if backend.linked.Application.Root != entry.Application.Root {
+		t.Fatalf("linked root = %q, want %q", backend.linked.Application.Root, entry.Application.Root)
+	}
+	if model.overlay != overlayNone {
+		t.Fatalf("overlay = %v after link, want closed", model.overlay)
+	}
+	linked, ok := model.selectedEntry()
+	if !ok || !linked.Linked || linked.Application.Name != entry.Application.Name {
+		t.Fatalf("selected linked entry = %#v, exists %t", linked, ok)
 	}
 }
 

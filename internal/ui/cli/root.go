@@ -1068,16 +1068,11 @@ func (a *app) link(ctx context.Context) error {
 }
 
 func (a *app) linkWithScope(ctx context.Context, forcedScope string) error {
-	dir, err := filepath.Abs(a.dir)
+	repository, application, err := linkCandidate(ctx, a.dir)
 	if err != nil {
 		return err
 	}
-	repository, gitErr := (gitadapter.Inspector{}).Inspect(ctx, dir)
-	if gitErr != nil {
-		repository = ports.Repository{Root: dir}
-	}
-	name := sanitize(filepath.Base(dir))
-	commands := inferCommand(dir)
+	dir := application.Root
 	scope := forcedScope
 	if scope == "" {
 		scope = "user"
@@ -1096,32 +1091,13 @@ func (a *app) linkWithScope(ctx context.Context, forcedScope string) error {
 			return err
 		}
 	}
-	application := catalog.Application{
-		Name:     name,
-		Root:     dir,
-		Commands: commandLines(commands),
-	}
-	application, err = application.Normalized()
-	if err != nil {
-		return err
-	}
-	if err := application.Validate(); err != nil {
-		return err
-	}
-
 	writer := config.Writer{UserPath: a.configPath}
 	switch scope {
 	case "user":
-		match := config.Match{Repo: repository.Remote}
-		if repository.Remote == "" {
-			match.Path = dir
-		} else if relative, relErr := filepath.Rel(repository.Root, dir); relErr == nil {
-			match.Dir = relative
-		}
-		if err := writer.SaveUser(name, match, application); err != nil {
+		if err := writer.SaveUser(application.Name, userLinkMatch(repository, dir), application); err != nil {
 			return err
 		}
-		_, _ = fmt.Fprintf(a.stdout, "Linked %s in %s\n", name, a.configPath)
+		_, _ = fmt.Fprintf(a.stdout, "Linked %s in %s\n", application.Name, a.configPath)
 	case "repo":
 		path, err := writer.SaveRepo(dir, application)
 		if err != nil {
@@ -1130,7 +1106,7 @@ func (a *app) linkWithScope(ctx context.Context, forcedScope string) error {
 		if err := a.trustLinkedRepository(ctx); err != nil {
 			return err
 		}
-		_, _ = fmt.Fprintf(a.stdout, "Linked %s in %s\n", name, path)
+		_, _ = fmt.Fprintf(a.stdout, "Linked %s in %s\n", application.Name, path)
 	default:
 		return fmt.Errorf("scope must be user or repo")
 	}
@@ -1139,6 +1115,40 @@ func (a *app) linkWithScope(ctx context.Context, forcedScope string) error {
 		_, _ = fmt.Fprintln(a.stdout, "No run command detected. Add commands in Cassie configuration before running this application.")
 	}
 	return nil
+}
+
+func linkCandidate(ctx context.Context, dir string) (ports.Repository, catalog.Application, error) {
+	dir, err := filepath.Abs(dir)
+	if err != nil {
+		return ports.Repository{}, catalog.Application{}, err
+	}
+	repository, gitErr := (gitadapter.Inspector{}).Inspect(ctx, dir)
+	if gitErr != nil {
+		repository = ports.Repository{Root: dir}
+	}
+	application := catalog.Application{
+		Name:     sanitize(filepath.Base(dir)),
+		Root:     dir,
+		Commands: commandLines(inferCommand(dir)),
+	}
+	application, err = application.Normalized()
+	if err != nil {
+		return ports.Repository{}, catalog.Application{}, err
+	}
+	if err := application.Validate(); err != nil {
+		return ports.Repository{}, catalog.Application{}, err
+	}
+	return repository, application, nil
+}
+
+func userLinkMatch(repository ports.Repository, dir string) config.Match {
+	match := config.Match{Repo: repository.Remote}
+	if repository.Remote == "" {
+		match.Path = dir
+	} else if relative, err := filepath.Rel(repository.Root, dir); err == nil {
+		match.Dir = relative
+	}
+	return match
 }
 
 func (a *app) trustLinkedRepository(ctx context.Context) error {

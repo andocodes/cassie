@@ -187,6 +187,18 @@ func (b *dashboardBackend) WatchLogs(ctx context.Context, id string, limit int64
 	return b.client.Watch(ctx, id, limit)
 }
 
+func (b *dashboardBackend) Link(ctx context.Context, entry tui.Entry) ([]tui.Entry, error) {
+	repository, application, err := linkCandidate(ctx, entry.Application.Root)
+	if err != nil {
+		return nil, err
+	}
+	writer := config.Writer{UserPath: b.owner.configPath}
+	if err := writer.SaveUser(application.Name, userLinkMatch(repository, application.Root), application); err != nil {
+		return nil, err
+	}
+	return b.Refresh(ctx)
+}
+
 func (b *dashboardBackend) Start(ctx context.Context, entry tui.Entry) (runtimeDomain.Process, error) {
 	if platformState := b.EnsurePlatform(ctx); platformState.State == tui.PlatformFailed {
 		return runtimeDomain.Process{}, errors.New(platformState.Detail)

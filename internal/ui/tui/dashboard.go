@@ -11,6 +11,7 @@ import (
 	"github.com/andocodes/cassie/internal/domain/catalog"
 	runtimeDomain "github.com/andocodes/cassie/internal/domain/runtime"
 	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/bubbles/paginator"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -50,6 +51,7 @@ type Backend interface {
 	EnsurePlatform(context.Context) Platform
 	WatchProcesses(context.Context, int) ([]runtimeDomain.Process, <-chan runtimeDomain.ProcessEvent, <-chan error, error)
 	WatchLogs(context.Context, string, int64) ([]byte, <-chan []byte, <-chan error, error)
+	Link(context.Context, Entry) ([]Entry, error)
 	Start(context.Context, Entry) (runtimeDomain.Process, error)
 	Stop(context.Context, string) error
 	Trust(context.Context, Entry) error
@@ -94,10 +96,13 @@ func (rowDelegate) Render(writer io.Writer, model list.Model, index int, value l
 	indicator, indicatorStyle := stateIndicator(row.state)
 	name := truncate(row.entry.Application.Name, max(rowWidth-lipgloss.Width(row.state)-5, 4))
 	gap := max(rowWidth-lipgloss.Width(indicator)-lipgloss.Width(name)-lipgloss.Width(row.state)-3, 1)
-	line := indicatorStyle.Render(indicator) + " " + name + strings.Repeat(" ", gap) + mutedStyle.Render(row.state)
 	if selected {
+		line := "■ " + name + strings.Repeat(" ", gap) + row.state
 		line = selectedStyle.Width(model.Width()).Render(line)
+		_, _ = fmt.Fprint(writer, line)
+		return
 	}
+	line := indicatorStyle.Render(indicator) + " " + name + strings.Repeat(" ", gap) + mutedStyle.Render(row.state)
 	_, _ = fmt.Fprint(writer, line)
 }
 
@@ -184,6 +189,12 @@ type actionMsg struct {
 	err     error
 }
 
+type linkMsg struct {
+	entry   Entry
+	entries []Entry
+	err     error
+}
+
 func Run(ctx context.Context, options Options) error {
 	if options.Backend == nil {
 		return fmt.Errorf("TUI backend is required")
@@ -215,6 +226,7 @@ func newDashboard(ctx context.Context, options Options) *dashboard {
 	d.list = newList(nil)
 	d.detected = newList(nil)
 	d.detected.SetShowPagination(true)
+	d.detected.Paginator.Type = paginator.Arabic
 	d.logs = viewport.New(40, 10)
 	d.rebuildLists()
 	d.resize()
@@ -267,7 +279,9 @@ func (m *dashboard) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			commands = append(commands, command)
 		}
 	case tea.MouseMsg:
-		m.handleMouse(message)
+		if command := m.handleMouse(message); command != nil {
+			commands = append(commands, command)
+		}
 	case tea.WindowSizeMsg:
 		m.width = max(message.Width, 36)
 		m.height = max(message.Height, 10)
@@ -328,6 +342,18 @@ func (m *dashboard) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.rebuildLists()
+	case linkMsg:
+		delete(m.busy, entryKey(message.entry))
+		if message.err != nil {
+			m.notice = "Link: " + message.err.Error()
+		} else {
+			m.entries = message.entries
+			m.overlay = overlayNone
+			m.notice = message.entry.Application.Name + " linked"
+			m.rebuildLists()
+			m.selectLinked(message.entry)
+			commands = append(commands, m.watchSelectedLog())
+		}
 	}
 
 	if m.overlay == overlayDetected && overlayBefore == m.overlay {
@@ -347,9 +373,9 @@ func (m *dashboard) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(commands...)
 }
 
-func (m *dashboard) handleMouse(message tea.MouseMsg) {
+func (m *dashboard) handleMouse(message tea.MouseMsg) tea.Cmd {
 	if m.overlay != overlayDetected {
-		return
+		return nil
 	}
 	const wheelRows = 3
 	switch message.Button {
@@ -361,7 +387,14 @@ func (m *dashboard) handleMouse(message tea.MouseMsg) {
 		for range wheelRows {
 			m.detected.CursorDown()
 		}
+	case tea.MouseButtonLeft:
+		if message.Action == tea.MouseActionPress && message.X < lipgloss.Width(detectedSearchButton()) && message.Y == m.height-1 {
+			var command tea.Cmd
+			m.detected, command = m.detected.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+			return command
+		}
 	}
+	return nil
 }
 
 func (m *dashboard) handleKey(message tea.KeyMsg) tea.Cmd {
@@ -379,6 +412,16 @@ func (m *dashboard) handleKey(message tea.KeyMsg) tea.Cmd {
 		return tea.Quit
 	}
 	if m.overlay != overlayNone {
+		if m.overlay == overlayDetected && key == "enter" {
+			entry, ok := m.selectedDetectedEntry()
+			if !ok {
+				return nil
+			}
+			m.notice = ""
+			m.busy[entryKey(entry)] = "linking"
+			m.rebuildLists()
+			return m.link(entry)
+		}
 		switch key {
 		case "esc", "q", "p", "d", "?":
 			m.overlay = overlayNone
@@ -472,6 +515,13 @@ func (m *dashboard) handleKey(message tea.KeyMsg) tea.Cmd {
 		m.logs.GotoBottom()
 	}
 	return nil
+}
+
+func (m *dashboard) link(entry Entry) tea.Cmd {
+	return func() tea.Msg {
+		entries, err := m.backend.Link(m.ctx, entry)
+		return linkMsg{entry: entry, entries: entries, err: err}
+	}
 }
 
 func (m *dashboard) start(entry Entry) tea.Cmd {
@@ -628,7 +678,9 @@ func (m *dashboard) items() ([]list.Item, []list.Item) {
 		if entry.Linked {
 			linked = append(linked, row)
 		} else {
-			row.state = "detected"
+			if row.state != "linking" {
+				row.state = "detected"
+			}
 			detected = append(detected, row)
 		}
 	}
@@ -694,6 +746,22 @@ func (m *dashboard) selectedEntry() (Entry, bool) {
 	return selected.entry, ok
 }
 
+func (m *dashboard) selectedDetectedEntry() (Entry, bool) {
+	selected, ok := m.detected.SelectedItem().(item)
+	return selected.entry, ok
+}
+
+func (m *dashboard) selectLinked(entry Entry) {
+	want := entryKey(entry)
+	for index, value := range m.list.Items() {
+		row, ok := value.(item)
+		if ok && entryKey(row.entry) == want {
+			m.list.Select(index)
+			return
+		}
+	}
+}
+
 func (m *dashboard) selectedKey() string {
 	entry, ok := m.selectedEntry()
 	if !ok {
@@ -718,10 +786,11 @@ func applicationKey(name, root string) string { return name + "\x00" + filepath.
 
 func (m *dashboard) resize() {
 	bodyHeight := max(m.height-4, 6)
-	overlayWidth := min(max(m.width-12, 28), 88) - overlayStyle.GetHorizontalPadding()
+	overlayWidth := min(max(m.width-12, 28), 88)
+	overlayContentWidth := max(overlayWidth-overlayStyle.GetHorizontalPadding(), 12)
 	if m.width < 72 {
 		m.list.SetSize(max(m.width-4, 12), max(bodyHeight-2, 4))
-		m.detected.SetSize(overlayWidth, max(bodyHeight-10, 4))
+		m.detected.SetSize(overlayContentWidth, max(bodyHeight-10, 4))
 		m.logs.Width = max(m.width-6, 12)
 		m.logs.Height = max(bodyHeight-8, 3)
 		return
@@ -729,7 +798,7 @@ func (m *dashboard) resize() {
 	leftWidth := min(40, max(28, m.width/3))
 	rightWidth := max(m.width-leftWidth-4, 28)
 	m.list.SetSize(max(leftWidth-4, 12), max(bodyHeight-2, 4))
-	m.detected.SetSize(overlayWidth, max(bodyHeight-10, 4))
+	m.detected.SetSize(overlayContentWidth, max(bodyHeight-10, 4))
 	m.logs.Width = max(rightWidth-4, 12)
 	m.logs.Height = max(bodyHeight-9, 3)
 }
@@ -831,7 +900,10 @@ func (m *dashboard) renderOverlay(height int) string {
 		if len(m.detected.Items()) == 0 {
 			content = mutedStyle.Render("No unlinked repositories found.")
 		} else {
-			content = m.detected.View() + "\n\n" + mutedStyle.Render("Link one from its directory with cassie link.")
+			content = m.detected.View() + "\n\n" + mutedStyle.Render("Press Enter to link the selected repository.")
+			if m.notice != "" {
+				content += "\n" + warningStyle.Render(wrap(m.notice, width-4))
+			}
 		}
 	case overlayPlatform:
 		title = "PLATFORM"
@@ -872,9 +944,9 @@ func (m *dashboard) footer() string {
 			return footerStyle.Render("t trust + run   esc close")
 		}
 		if m.overlay == overlayDetected {
-			keys := "↑/↓ or j/k scroll   PgUp/PgDn page   / filter   esc close"
+			keys := detectedSearchButton() + "  enter link   ↑/↓ or j/k scroll   PgUp/PgDn page   esc close"
 			if m.width < 60 {
-				keys = "↑/↓ scroll   / filter   esc close"
+				keys = detectedSearchButton() + "  enter link   ↑/↓ scroll   esc close"
 			}
 			return footerStyle.MaxWidth(m.width).Render(keys)
 		}
@@ -994,8 +1066,13 @@ var (
 	mutedStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	linkStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Underline(true)
 	selectedStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("255")).Background(lipgloss.Color("57")).Padding(0, 1)
+	buttonStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("235")).Background(lipgloss.Color("214")).Padding(0, 1)
 	detailStyle   = lipgloss.NewStyle()
 	panelStyle    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
 	overlayStyle  = lipgloss.NewStyle().Border(lipgloss.DoubleBorder()).Padding(1, 2).Background(lipgloss.Color("235"))
 	footerStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 )
+
+func detectedSearchButton() string {
+	return buttonStyle.Render("/ Search")
+}

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -103,5 +104,38 @@ func TestDashboardStartsTheCompleteCassieRunLifecycle(t *testing.T) {
 	}
 	if _, exists := client.spec.Env["SECRET"]; exists {
 		t.Fatalf("managed request contains a secret value: %#v", client.spec.Env)
+	}
+}
+
+func TestDashboardLinksDetectedRepositoryInUserConfiguration(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "pnpm-lock.yaml"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	backend := newDashboardBackend(&app{
+		configPath: configPath,
+		paths: system.Paths{
+			Config: configPath,
+			Data:   filepath.Join(t.TempDir(), "data"),
+			State:  filepath.Join(t.TempDir(), "state"),
+		},
+	}, root, &recordingDaemon{})
+
+	entries, err := backend.Link(context.Background(), tui.Entry{Application: catalog.Application{
+		Name: "example", Root: root, Domain: "example",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || !entries[0].Linked {
+		t.Fatalf("linked entries = %#v", entries)
+	}
+	commands := entries[0].Application.Commands
+	if len(commands) != 1 || commands[0].Run != "pnpm dev" {
+		t.Fatalf("inferred commands = %#v", commands)
+	}
+	if _, err := os.Stat(configPath); err != nil {
+		t.Fatalf("user configuration was not written: %v", err)
 	}
 }
