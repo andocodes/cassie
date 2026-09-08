@@ -1,7 +1,6 @@
 package platform
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -32,25 +31,12 @@ func (p Portless) Ready(ctx context.Context) (bool, error) {
 }
 
 func (p Portless) Start(ctx context.Context) error {
-	return p.start(ctx, "proxy", "start")
-}
-
-func (p Portless) StartOn(ctx context.Context, port int) error {
-	return p.start(ctx, "proxy", "start", "--port", strconv.Itoa(port), "--https")
-}
-
-func (p Portless) start(ctx context.Context, args ...string) error {
-	command := exec.CommandContext(ctx, p.binary(), args...)
+	command := exec.CommandContext(ctx, p.binary(), "proxy", "start")
 	command.Env = appendEnv(os.Environ(), p.Env)
 	command.Stdin = p.Stdin
-	var diagnostics bytes.Buffer
-	command.Stdout = outputWriter(p.Stdout, &diagnostics)
-	command.Stderr = outputWriter(p.Stderr, &diagnostics)
+	command.Stdout = p.Stdout
+	command.Stderr = p.Stderr
 	if err := command.Run(); err != nil {
-		detail := strings.TrimSpace(diagnostics.String())
-		if detail != "" {
-			return fmt.Errorf("start Portless proxy: %w: %s", err, detail)
-		}
 		return fmt.Errorf("start Portless proxy: %w", err)
 	}
 	return nil
@@ -103,26 +89,8 @@ func (p Portless) binary() string {
 }
 
 func appendEnv(base []string, values map[string]string) []string {
-	keys := make(map[string]struct{}, len(values))
-	for key := range values {
-		keys[key] = struct{}{}
-	}
-	result := make([]string, 0, len(base)+len(values))
-	for _, entry := range base {
-		key, _, _ := strings.Cut(entry, "=")
-		if _, replaced := keys[key]; !replaced {
-			result = append(result, entry)
-		}
-	}
 	for key, value := range values {
-		result = append(result, key+"="+value)
+		base = append(base, key+"="+value)
 	}
-	return result
-}
-
-func outputWriter(destination io.Writer, diagnostics io.Writer) io.Writer {
-	if destination == nil {
-		return diagnostics
-	}
-	return io.MultiWriter(destination, diagnostics)
+	return base
 }

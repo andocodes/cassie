@@ -7,7 +7,6 @@ import (
 	"net/url"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
@@ -140,19 +139,11 @@ func (a Application) ValidateRunnable() error {
 }
 
 func (a Application) URL() string {
-	return a.URLAt(443)
-}
-
-func (a Application) URLAt(proxyPort int) string {
 	domain, err := NormalizeDomain(a.Domain, a.Name)
 	if err != nil {
 		domain = a.Domain
 	}
-	address := "https://" + domain + ".localhost"
-	if proxyPort > 0 && proxyPort != 443 {
-		address += ":" + strconv.Itoa(proxyPort)
-	}
-	return address
+	return "https://" + domain + ".localhost"
 }
 
 func SuggestedDomain(name string) string {

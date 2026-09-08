@@ -24,7 +24,6 @@ const (
 
 type Entry struct {
 	Application  catalog.Application
-	Address      string
 	Linked       bool
 	Trusted      bool
 	TrustSummary string
@@ -488,7 +487,7 @@ func (m *dashboard) trustAndStart(entry Entry) tea.Cmd {
 
 func (m *dashboard) open(entry Entry) tea.Cmd {
 	return func() tea.Msg {
-		err := m.backend.Open(m.ctx, entryURL(entry))
+		err := m.backend.Open(m.ctx, entry.Application.URL())
 		return actionMsg{action: "open", entry: entry, err: err}
 	}
 }
@@ -773,7 +772,7 @@ func (m *dashboard) detail(width, height int) string {
 	status := stateStyle(state).Render(strings.ToUpper(state))
 	lines := []string{
 		titleStyle.Render(app.Name) + "  " + status,
-		linkStyle.Render(entryURL(entry)),
+		linkStyle.Render(app.URL()),
 		mutedStyle.Render(app.Root),
 	}
 	if m.notice != "" {
@@ -793,13 +792,6 @@ func (m *dashboard) detail(width, height int) string {
 		lines = append(lines, m.logs.View())
 	}
 	return detailStyle.MaxWidth(width).MaxHeight(height).Render(strings.Join(lines, "\n"))
-}
-
-func entryURL(entry Entry) string {
-	if entry.Address != "" {
-		return entry.Address
-	}
-	return entry.Application.URL()
 }
 
 func (m *dashboard) renderOverlay(height int) string {

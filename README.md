@@ -29,9 +29,9 @@ cassie
 ```
 
 `cassie up` installs the managed tools, starts Portless and Infisical, and sets
-up a fresh Infisical instance without a browser. Cassie selects an available
-Portless port from `1355–1399` and reuses it. Normal starts do not require sudo.
-Cassie does not open Docker Desktop, OrbStack, or Colima.
+up a fresh Infisical instance without a browser. Portless reuses its local CA
+but requests elevation each time it starts on port 443. Cassie does not open
+Docker Desktop, OrbStack, or Colima.
 
 For unattended first-time setup, provide Infisical's bootstrap variables:
 
@@ -114,7 +114,7 @@ compose:
 ```
 
 Set `domain` without `.localhost`. `web` becomes
-`https://web.localhost:<proxy-port>`.
+`https://web.localhost`.
 
 ### Precedence
 
@@ -174,12 +174,8 @@ the background, so large workspaces open without waiting for a full scan.
 `cassie up` installs pinned Portless and Infisical CLI versions in Cassie's data
 directory. It starts the Portless HTTPS proxy and runs Infisical Server,
 PostgreSQL, and Redis through Docker Compose at
-`https://infisical.localhost:<proxy-port>`. `cassie down` stops all of them and
-preserves their local data.
-
-Cassie scans ports `1355–1399`, tries up to five available ports in random
-order, and saves the successful port. If none can start, `cassie up` reports the
-attempted ports and exits. Set `PORTLESS_PORT` to require one specific port.
+`https://infisical.localhost`. `cassie down` stops all of them and preserves
+their local data.
 
 The dashboard uses a per-user local daemon for application processes. The
 daemon stores process metadata and bounded logs in Cassie's state directory.

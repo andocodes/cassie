@@ -107,12 +107,7 @@ func (b *dashboardBackend) Cached(ctx context.Context) ([]tui.Entry, error) {
 func (b *dashboardBackend) entries(ctx context.Context, store *sqlite.Sessions, applications []config.Resolved) ([]tui.Entry, error) {
 	entries := make([]tui.Entry, 0, len(applications))
 	for _, resolved := range applications {
-		entry := tui.Entry{
-			Application: resolved.Application,
-			Address:     b.owner.applicationURL(resolved.Application),
-			Linked:      resolved.Linked,
-			Trusted:     true,
-		}
+		entry := tui.Entry{Application: resolved.Application, Linked: resolved.Linked, Trusted: true}
 		if resolved.Trust != nil {
 			entry.TrustSummary = commandSummary(resolved.Application)
 			trusted, err := store.Trusted(ctx, resolved.Trust.Path, resolved.Trust.Digest)
