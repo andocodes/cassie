@@ -53,3 +53,73 @@ func TestSessionsRoundTrip(t *testing.T) {
 		t.Fatalf("changed digest must not remain trusted, got trusted=%v err=%v", trusted, err)
 	}
 }
+
+func TestManagedProcessesRoundTripWithoutEnvironment(t *testing.T) {
+	store, err := sqlite.Open(filepath.Join(t.TempDir(), "cassie.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	started := time.Date(2026, 9, 8, 9, 0, 0, 0, time.UTC)
+	process := runtime.Process{
+		ID: "process-1", App: "phoebe-ui", Root: "/work/phoebe-ui", PID: 42,
+		Status: runtime.StatusRunning, StartedAt: started, LogPath: "/state/logs/process-1.log",
+	}
+	if err := store.StartProcess(context.Background(), process); err != nil {
+		t.Fatal(err)
+	}
+
+	running, err := store.RunningProcesses(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(running) != 1 || running[0] != process {
+		t.Fatalf("running processes = %#v, want %#v", running, []runtime.Process{process})
+	}
+
+	ended := started.Add(time.Minute)
+	if err := store.FinishProcess(context.Background(), process.ID, runtime.StatusStopped, 130, ended); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := store.Process(context.Background(), process.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != runtime.StatusStopped || stored.ExitCode == nil || *stored.ExitCode != 130 || stored.EndedAt == nil || !stored.EndedAt.Equal(ended) {
+		t.Fatalf("finished process = %#v", stored)
+	}
+
+	running, err = store.RunningProcesses(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(running) != 0 {
+		t.Fatalf("running processes after finish = %#v", running)
+	}
+}
+
+func TestWorkspaceIndexReplacesTheCachedSnapshot(t *testing.T) {
+	store, err := sqlite.Open(filepath.Join(t.TempDir(), "cassie.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	if payload, exists, err := store.WorkspaceIndex(ctx, "/work"); err != nil || exists || payload != nil {
+		t.Fatalf("empty index = %q, %v, %v", payload, exists, err)
+	}
+	if err := store.SaveWorkspaceIndex(ctx, "/work", []byte("first"), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveWorkspaceIndex(ctx, "/work", []byte("second"), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	payload, exists, err := store.WorkspaceIndex(ctx, "/work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !exists || string(payload) != "second" {
+		t.Fatalf("index = %q, %v", payload, exists)
+	}
+}

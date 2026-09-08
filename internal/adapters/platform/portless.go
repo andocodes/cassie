@@ -3,6 +3,7 @@ package platform
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strconv"
@@ -14,6 +15,43 @@ import (
 type Portless struct {
 	Binary string
 	Env    map[string]string
+	Stdin  io.Reader
+	Stdout io.Writer
+	Stderr io.Writer
+}
+
+func (p Portless) Ready(ctx context.Context) (bool, error) {
+	command := exec.CommandContext(ctx, p.binary(), "doctor")
+	command.Env = appendEnv(os.Environ(), p.Env)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		return false, fmt.Errorf("check Portless proxy: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return !strings.Contains(string(output), "Proxy is not running"), nil
+}
+
+func (p Portless) Start(ctx context.Context) error {
+	command := exec.CommandContext(ctx, p.binary(), "proxy", "start")
+	command.Env = appendEnv(os.Environ(), p.Env)
+	command.Stdin = p.Stdin
+	command.Stdout = p.Stdout
+	command.Stderr = p.Stderr
+	if err := command.Run(); err != nil {
+		return fmt.Errorf("start Portless proxy: %w", err)
+	}
+	return nil
+}
+
+func (p Portless) Stop(ctx context.Context) error {
+	command := exec.CommandContext(ctx, p.binary(), "proxy", "stop")
+	command.Env = appendEnv(os.Environ(), p.Env)
+	command.Stdin = p.Stdin
+	command.Stdout = p.Stdout
+	command.Stderr = p.Stderr
+	if err := command.Run(); err != nil {
+		return fmt.Errorf("stop Portless proxy: %w", err)
+	}
+	return nil
 }
 
 func (p Portless) Wrap(app catalog.Application, command catalog.Command) catalog.Command {
@@ -21,16 +59,12 @@ func (p Portless) Wrap(app catalog.Application, command catalog.Command) catalog
 	if binary == "" {
 		binary = "portless"
 	}
-	command.Run = shellWord(binary) + " --name " + shellWord(app.Domain) + " " + command.Run
+	command.Run = portlessCommand(binary, app.Domain, command.Run)
 	return command
 }
 
 func (p Portless) Alias(ctx context.Context, domain string, port int) error {
-	binary := p.Binary
-	if binary == "" {
-		binary = "portless"
-	}
-	command := exec.CommandContext(ctx, binary, "alias", domain, strconv.Itoa(port))
+	command := exec.CommandContext(ctx, p.binary(), "alias", domain, strconv.Itoa(port))
 	command.Env = appendEnv(os.Environ(), p.Env)
 	if output, err := command.CombinedOutput(); err != nil {
 		return fmt.Errorf("register Portless route: %w: %s", err, strings.TrimSpace(string(output)))
@@ -39,11 +73,7 @@ func (p Portless) Alias(ctx context.Context, domain string, port int) error {
 }
 
 func (p Portless) Remove(ctx context.Context, domain string) error {
-	binary := p.Binary
-	if binary == "" {
-		binary = "portless"
-	}
-	command := exec.CommandContext(ctx, binary, "alias", "--remove", domain)
+	command := exec.CommandContext(ctx, p.binary(), "alias", "--remove", domain)
 	command.Env = appendEnv(os.Environ(), p.Env)
 	if output, err := command.CombinedOutput(); err != nil {
 		return fmt.Errorf("remove Portless route: %w: %s", err, strings.TrimSpace(string(output)))
@@ -51,13 +81,16 @@ func (p Portless) Remove(ctx context.Context, domain string) error {
 	return nil
 }
 
+func (p Portless) binary() string {
+	if p.Binary == "" {
+		return "portless"
+	}
+	return p.Binary
+}
+
 func appendEnv(base []string, values map[string]string) []string {
 	for key, value := range values {
 		base = append(base, key+"="+value)
 	}
 	return base
-}
-
-func shellWord(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
 }

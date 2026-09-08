@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -97,8 +98,8 @@ func (a Application) Validate() error {
 	if strings.TrimSpace(a.Name) == "" {
 		return fmt.Errorf("application name is required")
 	}
-	if !validDomain(a.Domain) || strings.HasSuffix(a.Domain, ".localhost") || a.Domain == "infisical" {
-		return fmt.Errorf("domain %q must be a bare lowercase hostname such as %q", a.Domain, a.Name)
+	if _, err := NormalizeDomain(a.Domain, a.Name); err != nil {
+		return err
 	}
 	if a.Port < 0 || a.Port > 65535 {
 		return fmt.Errorf("port must be between 0 and 65535")
@@ -138,14 +139,18 @@ func (a Application) ValidateRunnable() error {
 }
 
 func (a Application) URL() string {
-	return "https://" + a.Domain + ".localhost"
+	domain, err := NormalizeDomain(a.Domain, a.Name)
+	if err != nil {
+		domain = a.Domain
+	}
+	return "https://" + domain + ".localhost"
 }
 
 func SuggestedDomain(name string) string {
 	const maxLabelLength = 63
 	const hashLength = 8
 
-	name = strings.Trim(name, "-")
+	name = domainSlug(name)
 	if len(name) <= maxLabelLength {
 		return name
 	}
@@ -153,4 +158,51 @@ func SuggestedDomain(name string) string {
 	suffix := hex.EncodeToString(digest[:])[:hashLength]
 	prefix := strings.TrimRight(name[:maxLabelLength-hashLength-1], "-")
 	return prefix + "-" + suffix
+}
+
+func NormalizeDomain(value, name string) (string, error) {
+	original := strings.TrimSpace(value)
+	domain := strings.ToLower(original)
+	if domain == "" {
+		domain = SuggestedDomain(name)
+	}
+	if strings.Contains(domain, "://") {
+		parsed, err := url.Parse(domain)
+		if err != nil || parsed.Hostname() == "" || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Path != "" && parsed.Path != "/" {
+			return "", fmt.Errorf("domain %q must be a local hostname or URL", original)
+		}
+		domain = parsed.Hostname()
+	}
+	domain = strings.TrimSuffix(strings.TrimSuffix(domain, "."), ".localhost")
+	if !validDomain(domain) || domain == "infisical" {
+		return "", fmt.Errorf("domain %q must identify an application such as %q or %q", original, SuggestedDomain(name), SuggestedDomain(name)+".localhost")
+	}
+	return domain, nil
+}
+
+func (a Application) Normalized() (Application, error) {
+	domain, err := NormalizeDomain(a.Domain, a.Name)
+	if err != nil {
+		return Application{}, err
+	}
+	a.Domain = domain
+	return a, nil
+}
+
+func domainSlug(value string) string {
+	value = strings.ToLower(value)
+	var output strings.Builder
+	separator := false
+	for _, character := range value {
+		if character >= 'a' && character <= 'z' || character >= '0' && character <= '9' {
+			output.WriteRune(character)
+			separator = false
+			continue
+		}
+		if output.Len() > 0 && !separator {
+			output.WriteByte('-')
+			separator = true
+		}
+	}
+	return strings.Trim(output.String(), "-")
 }

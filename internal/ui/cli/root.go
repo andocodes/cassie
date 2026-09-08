@@ -105,6 +105,7 @@ func New(version string) (*cobra.Command, error) {
 	root.AddCommand(a.caCommand())
 	root.AddCommand(a.backupCommand())
 	root.AddCommand(a.restoreCommand())
+	root.AddCommand(a.daemonCommand())
 	return root, nil
 }
 
@@ -142,38 +143,20 @@ func (a *app) resolve(ctx context.Context, name string) (config.Resolved, error)
 }
 
 func (a *app) dashboard(ctx context.Context) error {
-	discovery, err := a.resolver().Discover(ctx, a.dir)
+	root, err := filepath.Abs(a.dir)
 	if err != nil {
 		return err
 	}
-	applications := make([]catalog.Application, 0, len(discovery.Applications))
-	for _, resolved := range discovery.Applications {
-		applications = append(applications, resolved.Application)
-	}
-	selection, err := tui.Choose(applications)
+	client, err := a.ensureDaemon(ctx)
 	if err != nil {
 		return err
 	}
-	switch selection.Action {
-	case tui.ActionRun:
-		for _, resolved := range discovery.Applications {
-			if resolved.Application.Root == selection.Root && resolved.Application.Name == selection.Name {
-				return a.runResolved(ctx, resolved)
-			}
-		}
-		return fmt.Errorf("selected application is no longer available")
-	case tui.ActionLink:
-		if selection.Root != "" {
-			a.dir = selection.Root
-		}
-		return a.link(ctx)
-	case tui.ActionStatus:
-		return a.status(ctx)
-	case tui.ActionDoctor:
-		return a.doctor(ctx, false)
-	default:
-		return nil
+	backend := newDashboardBackend(a, root, client)
+	entries, err := backend.Cached(ctx)
+	if err != nil {
+		return err
 	}
+	return tui.Run(ctx, tui.Options{Root: root, Entries: entries, Backend: backend})
 }
 
 func (a *app) runCommand() *cobra.Command {
@@ -579,7 +562,7 @@ func (a *app) doctor(ctx context.Context, fix bool) error {
 
 func (a *app) doctorChecks() []doctorCheck {
 	return []doctorCheck{
-		{name: "Docker", command: "docker", args: []string{"info"}},
+		{name: "Docker", command: "docker", args: []string{"info", "--format", "{{json .}}"}},
 		{name: "Compose", command: "docker", args: []string{"compose", "version"}},
 		{name: "Node 24+", command: "node", args: []string{"--version"}},
 		{name: "Portless", command: tool(a.paths, "portless"), args: []string{"--version"}, tool: true, version: platform.PortlessVersion},
@@ -616,6 +599,9 @@ func (a *app) runDoctorChecks(ctx context.Context, checks []doctorCheck) doctorR
 			report.nodeReady = true
 		}
 		detail := firstLine(string(output))
+		if check.name == "Docker" {
+			detail = dockerDetail(ctx, output)
+		}
 		if check.version != "" {
 			found := reportedVersion(detail)
 			if found != "" && found != check.version {
@@ -900,7 +886,11 @@ func (a *app) certificateStore() trustadapter.Store {
 
 func (a *app) developmentEnvironment() map[string]string {
 	noProxy := mergeNoProxy(os.Getenv("NO_PROXY"))
-	values := map[string]string{"NO_PROXY": noProxy, "no_proxy": noProxy}
+	values := map[string]string{
+		"NO_PROXY":           noProxy,
+		"no_proxy":           noProxy,
+		"PORTLESS_STATE_DIR": filepath.Join(a.paths.State, "portless"),
+	}
 	store := a.certificateStore()
 	if store.HasBundle() {
 		values["NODE_EXTRA_CA_CERTS"] = store.Bundle()
@@ -1022,65 +1012,35 @@ func (a *app) linkWithScope(ctx context.Context, forcedScope string) error {
 		repository = ports.Repository{Root: dir}
 	}
 	name := sanitize(filepath.Base(dir))
-	domain := catalog.SuggestedDomain(name)
-	port := ""
 	commands := inferCommand(dir)
-	cleanup := ""
-	project := ""
-	environment := "dev"
-	secretPath := "/"
-	composeServices := ""
 	scope := forcedScope
 	if scope == "" {
 		scope = "user"
 	}
 
-	fields := []huh.Field{
-		huh.NewInput().Title("Name").Value(&name).Validate(required("name")),
-		huh.NewInput().Title("Domain").Description("Cassie adds .localhost").Value(&domain).Validate(required("domain")),
-		huh.NewInput().Title("Port").Description("Leave empty when Portless should assign PORT").Value(&port),
-		huh.NewText().Title("Commands").Description("One command per line; the final command owns the foreground").Value(&commands).Validate(required("commands")),
-		huh.NewText().Title("Cleanup").Description("Optional; runs in reverse order").Value(&cleanup),
-		huh.NewInput().Title("Infisical project").Description("Optional project ID").Value(&project),
-		huh.NewInput().Title("Environment").Value(&environment),
-		huh.NewInput().Title("Secret path").Value(&secretPath),
-		huh.NewInput().Title("Compose services").Description("Optional comma-separated services receiving secrets").Value(&composeServices),
-	}
+	fields := []huh.Field{}
 	if forcedScope == "" {
-		fields = append(fields, huh.NewSelect[string]().Title("Save configuration").Options(
-			huh.NewOption("User — no repository files", "user"),
-			huh.NewOption("Repository — .cassie.yaml", "repo"),
+		fields = append(fields, huh.NewSelect[string]().Title("Save application").Options(
+			huh.NewOption("User configuration", "user"),
+			huh.NewOption("Repository .cassie.yaml", "repo"),
 		).Value(&scope))
 	}
-	form := huh.NewForm(huh.NewGroup(fields...))
-	if err := form.RunWithContext(ctx); err != nil {
-		return err
-	}
-
-	parsedPort := 0
-	if strings.TrimSpace(port) != "" {
-		parsedPort, err = strconv.Atoi(strings.TrimSpace(port))
-		if err != nil {
-			return fmt.Errorf("port must be a number")
+	if len(fields) > 0 {
+		form := huh.NewForm(huh.NewGroup(fields...))
+		if err := form.RunWithContext(ctx); err != nil {
+			return err
 		}
 	}
 	application := catalog.Application{
 		Name:     name,
-		Domain:   domain,
-		Port:     parsedPort,
 		Root:     dir,
 		Commands: commandLines(commands),
-		Cleanup:  commandLines(cleanup),
 	}
-	if project != "" {
-		application.Secrets = catalog.SecretBinding{Project: project, Environment: environment, Path: secretPath}
+	application, err = application.Normalized()
+	if err != nil {
+		return err
 	}
-	for _, service := range strings.Split(composeServices, ",") {
-		if service = strings.TrimSpace(service); service != "" {
-			application.Compose.Services = append(application.Compose.Services, service)
-		}
-	}
-	if err := application.ValidateRunnable(); err != nil {
+	if err := application.Validate(); err != nil {
 		return err
 	}
 
@@ -1110,6 +1070,9 @@ func (a *app) linkWithScope(ctx context.Context, forcedScope string) error {
 		return fmt.Errorf("scope must be user or repo")
 	}
 	_, _ = fmt.Fprintln(a.stdout, application.URL())
+	if len(application.Commands) == 0 {
+		_, _ = fmt.Fprintln(a.stdout, "No run command detected. Add commands in Cassie configuration before running this application.")
+	}
 	return nil
 }
 

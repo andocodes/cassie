@@ -24,6 +24,7 @@ type Resolved struct {
 	Application catalog.Application
 	Sources     []string
 	Trust       *Trust
+	Linked      bool
 }
 
 type Trust struct {
@@ -60,9 +61,8 @@ func (r Resolver) Resolve(ctx context.Context, dir, requestedName string) (Resol
 
 	baseName := sanitizeName(filepath.Base(repository.Root))
 	effective := map[string]any{
-		"name":   baseName,
-		"domain": catalog.SuggestedDomain(baseName),
-		"grace":  "10s",
+		"name":  baseName,
+		"grace": "10s",
 	}
 	var sources []string
 
@@ -97,6 +97,7 @@ func (r Resolver) Resolve(ctx context.Context, dir, requestedName string) (Resol
 			return Resolved{}, err
 		}
 	}
+	linked := repoConfig != nil
 
 	lookupName := requestedName
 	if lookupName == "" && repoConfig != nil {
@@ -106,6 +107,7 @@ func (r Resolver) Resolve(ctx context.Context, dir, requestedName string) (Resol
 	if workspacePath != "" {
 		workspace, _, _ := readMap(workspacePath)
 		if name, app := matchApp(childMap(workspace, "apps"), lookupName, repository, dir); app != nil {
+			linked = true
 			effective = merge(effective, app)
 			if stringValue(effective["name"]) == "" {
 				effective["name"] = name
@@ -116,6 +118,7 @@ func (r Resolver) Resolve(ctx context.Context, dir, requestedName string) (Resol
 
 	if userExists {
 		if name, app := matchApp(childMap(user, "apps"), lookupName, repository, dir); app != nil {
+			linked = true
 			effective = merge(effective, app)
 			if _, set := effective["name"]; !set || effective["name"] == "" {
 				effective["name"] = name
@@ -148,10 +151,14 @@ func (r Resolver) Resolve(ctx context.Context, dir, requestedName string) (Resol
 		return Resolved{}, fmt.Errorf("decode effective configuration: %w", err)
 	}
 	app.Root = root
+	app, err = app.Normalized()
+	if err != nil {
+		return Resolved{}, fmt.Errorf("invalid Cassie configuration: %w", err)
+	}
 	if err := app.Validate(); err != nil {
 		return Resolved{}, fmt.Errorf("invalid Cassie configuration: %w", err)
 	}
-	return Resolved{Application: app, Sources: sources, Trust: executableTrust(repoPath, repoConfig)}, nil
+	return Resolved{Application: app, Sources: sources, Trust: executableTrust(repoPath, repoConfig), Linked: linked}, nil
 }
 
 func executableTrust(path string, source map[string]any) *Trust {

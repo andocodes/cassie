@@ -31,6 +31,36 @@ type ProcessRunner interface {
 	Run(ctx context.Context, process Process) error
 }
 
+// ProcessSupervisor owns processes independently of any connected CLI or TUI
+// client. Implementations must not persist ProcessSpec.Env.
+type ProcessSupervisor interface {
+	Start(ctx context.Context, spec runtime.ProcessSpec) (runtime.Process, error)
+	Stop(ctx context.Context, id string) error
+	Process(ctx context.Context, id string) (runtime.Process, error)
+	Processes(ctx context.Context, limit int) ([]runtime.Process, error)
+	Tail(ctx context.Context, id string, limit int64) ([]byte, error)
+	Follow(ctx context.Context, id string) (<-chan []byte, error)
+	Watch(ctx context.Context, id string, limit int64) ([]byte, <-chan []byte, error)
+	WatchProcesses(ctx context.Context, limit int) ([]runtime.Process, <-chan runtime.ProcessEvent, error)
+	Reconcile(ctx context.Context) error
+	Shutdown(ctx context.Context) error
+}
+
+type ProcessStore interface {
+	StartProcess(ctx context.Context, process runtime.Process) error
+	FinishProcess(ctx context.Context, id string, status runtime.Status, exitCode int, endedAt time.Time) error
+	Process(ctx context.Context, id string) (runtime.Process, error)
+	Processes(ctx context.Context, limit int) ([]runtime.Process, error)
+	RunningProcesses(ctx context.Context) ([]runtime.Process, error)
+}
+
+type ProcessLogStore interface {
+	Open(id string) (io.WriteCloser, string, error)
+	Tail(id string, limit int64) ([]byte, error)
+	Follow(ctx context.Context, id string) (<-chan []byte, error)
+	Watch(ctx context.Context, id string, limit int64) ([]byte, <-chan []byte, error)
+}
+
 type SecretProvider interface {
 	Load(ctx context.Context, binding catalog.SecretBinding) (map[string]string, error)
 }

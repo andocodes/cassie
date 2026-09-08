@@ -26,12 +26,13 @@ const (
 )
 
 type Manager struct {
-	DataDir string
-	Tools   string
-	Stdin   io.Reader
-	Stdout  io.Writer
-	Stderr  io.Writer
-	Env     map[string]string
+	DataDir        string
+	Tools          string
+	Stdin          io.Reader
+	Stdout         io.Writer
+	Stderr         io.Writer
+	Env            map[string]string
+	NonInteractive bool
 }
 
 func (m Manager) InstallTools(ctx context.Context) error {
@@ -76,18 +77,35 @@ func (m Manager) Up(ctx context.Context) error {
 	if err := m.compose(ctx, "up", "-d", "--remove-orphans"); err != nil {
 		return err
 	}
+	router := Portless{Binary: m.Binary("portless"), Env: m.Env, Stdin: m.Stdin, Stdout: m.Stdout, Stderr: m.Stderr}
+	ready, err := router.Ready(ctx)
+	if err != nil {
+		return err
+	}
+	if !ready {
+		if m.NonInteractive {
+			return fmt.Errorf("Portless proxy is not running; run cassie up once to complete interactive setup")
+		}
+		if err := router.Start(ctx); err != nil {
+			return err
+		}
+	}
 	if err := m.waitForInfisical(ctx, time.Minute); err != nil {
 		return err
 	}
-	return (Portless{Binary: m.Binary("portless"), Env: m.Env}).Alias(ctx, "infisical", infisicalPort)
+	return router.Alias(ctx, "infisical", infisicalPort)
 }
 
 func (m Manager) Down(ctx context.Context) error {
 	var result error
-	if err := (Portless{Binary: m.Binary("portless"), Env: m.Env}).Remove(ctx, "infisical"); err != nil {
+	router := Portless{Binary: m.Binary("portless"), Env: m.Env, Stdin: m.Stdin, Stdout: m.Stdout, Stderr: m.Stderr}
+	if err := router.Remove(ctx, "infisical"); err != nil {
 		result = errors.Join(result, err)
 	}
 	if err := m.compose(ctx, "down", "--remove-orphans"); err != nil {
+		result = errors.Join(result, err)
+	}
+	if err := router.Stop(ctx); err != nil {
 		result = errors.Join(result, err)
 	}
 	return result
@@ -172,9 +190,9 @@ func (m Manager) toolsCurrent() bool {
 func (m Manager) ensureEnvironment() error {
 	path := filepath.Join(m.DataDir, ".env")
 	if regular(path) {
-		return nil
+		return repairLegacyEncryptionKey(path)
 	}
-	encryptionKey, err := randomHex(32)
+	encryptionKey, err := randomHex(16)
 	if err != nil {
 		return err
 	}
@@ -200,6 +218,30 @@ func (m Manager) ensureEnvironment() error {
 		"",
 	}, "\n")
 	return writeFile(path, []byte(content), 0o600)
+}
+
+func repairLegacyEncryptionKey(path string) error {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read platform environment: %w", err)
+	}
+	lines := strings.Split(string(content), "\n")
+	for index, line := range lines {
+		key, found := strings.CutPrefix(line, "ENCRYPTION_KEY=")
+		if !found || len(key) != 64 {
+			continue
+		}
+		if _, err := hex.DecodeString(key); err != nil {
+			return nil
+		}
+		replacement, err := randomHex(16)
+		if err != nil {
+			return err
+		}
+		lines[index] = "ENCRYPTION_KEY=" + replacement
+		return writeFile(path, []byte(strings.Join(lines, "\n")), 0o600)
+	}
+	return nil
 }
 
 func (m Manager) waitForInfisical(ctx context.Context, timeout time.Duration) error {

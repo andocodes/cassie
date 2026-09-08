@@ -67,8 +67,10 @@ func (w Writer) SaveRepo(root string, app catalog.Application) (string, error) {
 func applicationMap(app catalog.Application) map[string]any {
 	result := map[string]any{
 		"name":     app.Name,
-		"domain":   app.Domain,
 		"commands": commandsValue(app.Commands),
+	}
+	if domain, err := catalog.NormalizeDomain(app.Domain, app.Name); err == nil && domain != catalog.SuggestedDomain(app.Name) {
+		result["domain"] = domain
 	}
 	if app.Port > 0 {
 		result["port"] = app.Port

@@ -22,17 +22,23 @@ on the [Releases](https://github.com/andocodes/cassie/releases) page.
 ## Quick start
 
 ```bash
-cassie up
+cassie up # one-time interactive setup
 cd path/to/app
 cassie link
-cassie run
+cassie
 ```
 
-`cassie up` starts the local platform and handles Infisical login. `cassie link`
-stores app configuration in `~/.config/cassie/config.yaml`. It does not change
-the repository. Use `cassie link --repo` to create a shared `.cassie.yaml`.
+`cassie up` installs the managed tools, starts the local platform, and handles
+Portless elevation and Infisical login. Later dashboard launches keep the
+platform running without opening Docker Desktop, OrbStack, or Colima.
 
-Run `cassie` without a subcommand to open the interactive dashboard.
+`cassie link` stores app configuration in `~/.config/cassie/config.yaml`. It
+does not change the repository. Use `cassie link --repo` to create a shared
+`.cassie.yaml`.
+
+Run `cassie` without a subcommand to open the workspace dashboard. Use `r` to
+run an app, `s` to stop it, `o` to open its URL, and `/` to filter. Apps keep
+running when the dashboard closes. Reopen Cassie to reconnect to their logs.
 
 ## Configuration
 
@@ -144,11 +150,20 @@ cassie run --group atlas
 Cassie scans to `workspace.depth`. It runs selected apps concurrently and
 prefixes their output with the app name. A failure stops the other apps.
 
+The dashboard shows linked apps first. Press `d` to inspect other detected
+repositories. Cassie caches the workspace index in SQLite and refreshes it in
+the background, so large workspaces open without waiting for a full scan.
+
 ## Platform and trust
 
 `cassie up` installs pinned Portless and Infisical CLI versions in Cassie's data
-directory. It runs Infisical Server, PostgreSQL, and Redis through Docker
-Compose at `https://infisical.localhost`. `cassie down` preserves the volumes.
+directory. It starts the Portless HTTPS proxy and runs Infisical Server,
+PostgreSQL, and Redis through Docker Compose at
+`https://infisical.localhost`. `cassie down` preserves the volumes.
+
+The dashboard uses a per-user local daemon for application processes. The
+daemon stores process metadata and bounded logs in Cassie's state directory.
+It does not store secret values. Closing the dashboard does not stop apps.
 
 `cassie doctor` checks local prerequisites. In an interactive terminal, it
 offers to install missing managed tools. Use `cassie doctor --fix` in scripts.
@@ -166,7 +181,7 @@ backup first.
 
 | Command | Purpose |
 | --- | --- |
-| `cassie` | Open the dashboard. |
+| `cassie` | Open the dashboard and reconnect to managed apps. |
 | `cassie up`, `cassie down` | Start or stop the local platform. |
 | `cassie link` | Configure the current app. |
 | `cassie run [app]` | Run one app. |

@@ -65,6 +65,8 @@ for changed behavior. Do not add tests that only mirror implementation details.
 - Keep command handlers responsible for state changes and query handlers
   responsible for reads.
 - Preserve cancellation, exit codes, cleanup, and persisted session state.
+- Keep daemon requests free of secret values. Start the complete application
+  lifecycle when work must survive a TUI disconnect.
 - Prefer small adapters and explicit data flow over shared mutable state.
 
 ## Behavior invariants

@@ -44,6 +44,35 @@ Command handlers change state. Query handlers read configuration and sessions.
 For a dynamic port, Portless wraps the last command and supplies `PORT`. For a
 fixed port, Cassie creates and later removes an explicit route.
 
+## Dashboard and daemon
+
+```text
+dashboard
+  → authenticated local daemon connection
+  → managed cassie run process
+  → existing run lifecycle
+  → bounded log file + SQLite process state
+```
+
+The dashboard starts the per-user daemon when needed. Unix systems use a mode
+`0600` Unix socket. Windows uses an authenticated loopback endpoint. Each
+client request includes a random token from the protected endpoint file.
+
+The daemon starts a complete `cassie run` process. It does not extract only the
+last development command. This keeps secret loading, setup commands, routing,
+cleanup, and session recording inside the existing application lifecycle.
+Secret values do not enter daemon requests or SQLite records.
+
+The daemon owns process groups after the dashboard disconnects. It stores
+bounded combined output under the state directory. A new dashboard receives a
+SQLite snapshot, then subscribes to process and log events. Stale running
+records become `interrupted` after a daemon restart.
+
+Workspace discovery follows the same snapshot-first pattern. The dashboard
+loads its last SQLite index, renders linked apps, then refreshes repository
+discovery in the background. Detected repositories remain candidates until a
+user links them.
+
 ## Configuration and trust
 
 The resolver applies sources in this order:
@@ -72,7 +101,7 @@ does not require repository trust.
 | --- | --- |
 | `~/.config/cassie` | User configuration. |
 | `~/.local/share/cassie` | Tools, platform files, CAs, and backups. |
-| `~/.local/state/cassie` | SQLite state and temporary runtime files. |
+| `~/.local/state/cassie` | Daemon endpoint, bounded logs, SQLite state, Portless state, and temporary runtime files. |
 
 `CASSIE_CONFIG`, `CASSIE_DATA`, and `CASSIE_STATE` override these paths.
 

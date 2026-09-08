@@ -88,6 +88,19 @@ func TestDoctorWarnsForDifferentToolVersions(t *testing.T) {
 	}
 }
 
+func TestDockerDetailShowsEngineAndActiveContext(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX fake executable")
+	}
+	bin := t.TempDir()
+	writeExecutable(t, bin, "docker", "#!/bin/sh\nprintf 'orbstack\\n'\n")
+	t.Setenv("PATH", strings.Join([]string{bin, "/usr/bin", "/bin"}, string(os.PathListSeparator)))
+	detail := dockerDetail(context.Background(), []byte(`{"Name":"orbstack","OperatingSystem":"OrbStack","ServerVersion":"29.4.0"}`))
+	if detail != "OrbStack · Engine 29.4.0 · context orbstack" {
+		t.Fatalf("Docker detail = %q", detail)
+	}
+}
+
 func doctorTestApp(t *testing.T, withNPM bool) (*app, *bytes.Buffer) {
 	t.Helper()
 	bin := t.TempDir()

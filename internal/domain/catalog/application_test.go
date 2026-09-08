@@ -12,7 +12,6 @@ func TestApplicationRejectsUnsafeConfiguration(t *testing.T) {
 		name string
 		app  Application
 	}{
-		{"localhost suffix", Application{Name: "web", Domain: "web.localhost"}},
 		{"reserved platform domain", Application{Name: "web", Domain: "infisical"}},
 		{"directory traversal", Application{Name: "web", Domain: "web", Commands: []Command{{Run: "dev", Dir: "../other"}}}},
 	} {
@@ -21,6 +20,24 @@ func TestApplicationRejectsUnsafeConfiguration(t *testing.T) {
 				t.Fatal("expected validation error")
 			}
 		})
+	}
+}
+
+func TestApplicationNormalizesFriendlyDomainInputs(t *testing.T) {
+	for _, input := range []string{"", "phoebe", "phoebe.localhost", "https://phoebe.localhost"} {
+		app, err := (Application{Name: "phoebe", Domain: input}).Normalized()
+		if err != nil {
+			t.Fatalf("normalize %q: %v", input, err)
+		}
+		if app.Domain != "phoebe" || app.URL() != "https://phoebe.localhost" {
+			t.Fatalf("normalize %q = domain %q, URL %q", input, app.Domain, app.URL())
+		}
+	}
+}
+
+func TestSuggestedDomainNormalizesApplicationName(t *testing.T) {
+	if got := SuggestedDomain("Phoebe UI"); got != "phoebe-ui" {
+		t.Fatalf("SuggestedDomain = %q, want phoebe-ui", got)
 	}
 }
 
