@@ -47,35 +47,38 @@ func TestReadyReportsStoppedProxy(t *testing.T) {
 	}
 }
 
-func TestInstallServiceUsesCassieStateDirectory(t *testing.T) {
+func TestProxyLifecycleUsesCassieState(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX fake executable")
 	}
 	root := t.TempDir()
 	binary := filepath.Join(root, "portless")
-	arguments := filepath.Join(root, "arguments")
+	calls := filepath.Join(root, "calls")
 	state := filepath.Join(root, "state")
-	shim := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CASSIE_ARGUMENTS\"\n"
+	shim := "#!/bin/sh\nprintf '%s|%s\\n' \"$PORTLESS_STATE_DIR\" \"$*\" >> \"$CASSIE_CALLS\"\n"
 	if err := os.WriteFile(binary, []byte(shim), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	portless := Portless{
 		Binary: binary,
 		Env: map[string]string{
-			"CASSIE_ARGUMENTS":   arguments,
+			"CASSIE_CALLS":       calls,
 			"PORTLESS_STATE_DIR": state,
 		},
 	}
-	if err := portless.InstallService(context.Background()); err != nil {
+	if err := portless.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	content, err := os.ReadFile(arguments)
+	if err := portless.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(calls)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "service\ninstall\n--state-dir\n" + state + "\n"
+	want := state + "|proxy start\n" + state + "|proxy stop\n"
 	if string(content) != want {
-		t.Fatalf("arguments = %q, want %q", content, want)
+		t.Fatalf("calls = %q, want %q", content, want)
 	}
 }
 

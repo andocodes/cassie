@@ -28,10 +28,10 @@ cassie link
 cassie
 ```
 
-`cassie up` installs the managed tools, installs the Portless system service,
-starts Infisical, and handles Infisical login. Portless asks for elevation once
-so it can serve HTTPS on port 443 and start at boot. Later dashboard launches
-reuse the service. Cassie does not open Docker Desktop, OrbStack, or Colima.
+`cassie up` installs the managed tools, starts Portless and Infisical, and
+handles Infisical login. Portless reuses its local CA but requests elevation
+each time it starts on port 443. Cassie does not open Docker Desktop, OrbStack,
+or Colima.
 
 `cassie link` stores app configuration in `~/.config/cassie/config.yaml`. It
 does not change the repository. Use `cassie link --repo` to create a shared
@@ -158,10 +158,10 @@ the background, so large workspaces open without waiting for a full scan.
 ## Platform and trust
 
 `cassie up` installs pinned Portless and Infisical CLI versions in Cassie's data
-directory. It installs Portless as a persistent system service and runs
-Infisical Server, PostgreSQL, and Redis through Docker Compose at
-`https://infisical.localhost`. `cassie down` stops the Compose stack and
-preserves its volumes. It leaves the shared Portless service running.
+directory. It starts the Portless HTTPS proxy and runs Infisical Server,
+PostgreSQL, and Redis through Docker Compose at
+`https://infisical.localhost`. `cassie down` stops all of them and preserves
+their local data.
 
 The dashboard uses a per-user local daemon for application processes. The
 daemon stores process metadata and bounded logs in Cassie's state directory.

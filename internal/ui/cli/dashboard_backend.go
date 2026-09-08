@@ -221,7 +221,7 @@ func (b *dashboardBackend) Start(ctx context.Context, entry tui.Entry) (runtimeD
 	command := joinShellCommand(
 		executable,
 		"--config", configPath,
-		"--dir", app.Root,
+		"--at", app.Root,
 		"run", app.Name,
 	)
 	return b.client.Start(ctx, runtimeDomain.ProcessSpec{

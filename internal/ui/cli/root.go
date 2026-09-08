@@ -89,7 +89,7 @@ func New(version string) (*cobra.Command, error) {
 	root.SetIn(a.stdin)
 	root.SetOut(a.stdout)
 	root.SetErr(a.stderr)
-	root.PersistentFlags().StringVarP(&a.dir, "dir", "C", ".", "run as if Cassie started in this directory")
+	root.PersistentFlags().StringVar(&a.dir, "at", ".", "run as if Cassie started at this path")
 	root.PersistentFlags().StringVar(&a.configPath, "config", paths.Config, "user configuration file")
 
 	root.AddCommand(a.runCommand())
@@ -129,7 +129,7 @@ func (a *app) resolve(ctx context.Context, name string) (config.Resolved, error)
 			return matches[0], nil
 		}
 		if len(matches) > 1 {
-			return config.Resolved{}, fmt.Errorf("application name %q is ambiguous; run from its repository or use --dir", name)
+			return config.Resolved{}, fmt.Errorf("application name %q is ambiguous; run from its repository or use --at", name)
 		}
 	}
 	resolved, resolveErr := a.resolver().Resolve(ctx, a.dir, name)

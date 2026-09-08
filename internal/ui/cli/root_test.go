@@ -44,7 +44,7 @@ func TestRunFromUserConfigWithoutRepositoryFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	command.SetArgs([]string{"--dir", root, "run"})
+	command.SetArgs([]string{"--at", root, "run"})
 	if err := command.ExecuteContext(context.Background()); err != nil {
 		t.Fatal(err)
 	}

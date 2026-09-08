@@ -93,7 +93,7 @@ func TestDashboardStartsTheCompleteCassieRunLifecycle(t *testing.T) {
 	if process.Status != runtimeDomain.StatusRunning || client.spec.App != "phoebe-ui" || client.spec.Root != root {
 		t.Fatalf("managed process = %#v, spec = %#v", process, client.spec)
 	}
-	for _, want := range []string{"--config", "--dir", "run", "phoebe-ui"} {
+	for _, want := range []string{"--config", "--at", "run", "phoebe-ui"} {
 		if !strings.Contains(client.spec.Command, want) {
 			t.Fatalf("managed command %q does not contain %q", client.spec.Command, want)
 		}
