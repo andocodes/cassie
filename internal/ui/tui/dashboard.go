@@ -55,6 +55,7 @@ type Backend interface {
 	WatchLogs(context.Context, string, int64) ([]byte, <-chan []byte, <-chan error, error)
 	Link(context.Context, Entry) ([]Entry, error)
 	Start(context.Context, Entry) (runtimeDomain.Process, error)
+	Rebuild(context.Context, Entry) (runtimeDomain.Process, error)
 	Stop(context.Context, string) error
 	Trust(context.Context, Entry) error
 	Open(context.Context, string) error
@@ -544,6 +545,21 @@ func (m *dashboard) handleKey(message tea.KeyMsg) tea.Cmd {
 		process, running := m.runningProcess(entry)
 		m.busy[entryKey(entry)] = "restarting"
 		return m.restart(entry, process.ID, running)
+	case "b":
+		entry, ok := m.selectedEntry()
+		if !ok {
+			return nil
+		}
+		if _, compose := entry.Application.ComposeDir(); !compose {
+			return nil
+		}
+		if entry.TrustSummary != "" && !entry.Trusted {
+			m.notice = "Trust this repository before rebuilding it"
+			return nil
+		}
+		process, running := m.runningProcess(entry)
+		m.busy[entryKey(entry)] = "rebuilding"
+		return m.rebuild(entry, process.ID, running)
 	case "o":
 		entry, ok := m.selectedEntry()
 		if ok {
@@ -592,6 +608,18 @@ func (m *dashboard) restart(entry Entry, id string, running bool) tea.Cmd {
 		}
 		process, err := m.backend.Start(m.ctx, entry)
 		return actionMsg{action: "restart", entry: entry, process: process, err: err}
+	}
+}
+
+func (m *dashboard) rebuild(entry Entry, id string, running bool) tea.Cmd {
+	return func() tea.Msg {
+		if running {
+			if err := m.backend.Stop(m.ctx, id); err != nil {
+				return actionMsg{action: "rebuild", entry: entry, err: err}
+			}
+		}
+		process, err := m.backend.Rebuild(m.ctx, entry)
+		return actionMsg{action: "rebuild", entry: entry, process: process, err: err}
 	}
 }
 
@@ -990,6 +1018,7 @@ func (m *dashboard) renderOverlay(height int) string {
 			"r or enter   run",
 			"s            stop",
 			"R            restart",
+			"b            rebuild Compose app",
 			"o            open local URL",
 			"p            platform",
 			"d            detected repositories",
@@ -1024,10 +1053,25 @@ func (m *dashboard) footer() string {
 		return footerStyle.Render("esc close")
 	}
 	keys := "/ filter   r run   s stop   R restart   o open   p platform   d detected   ? help   q quit"
+	if entry, ok := m.selectedEntry(); ok {
+		if _, compose := entry.Application.ComposeDir(); compose {
+			keys = "/ filter   r run   s stop   R restart   b rebuild   o open   p platform   d detected   ? help   q quit"
+		}
+	}
 	if m.width < 72 {
 		keys = "tab switch   / filter   r run   s stop   ? help   q quit"
+		if entry, ok := m.selectedEntry(); ok {
+			if _, compose := entry.Application.ComposeDir(); compose {
+				keys = "tab switch   r run   s stop   b rebuild   ? help   q quit"
+			}
+		}
 	} else if m.width < 105 {
 		keys = "/ filter   r run   s stop   R restart   o open   p platform   ? help   q quit"
+		if entry, ok := m.selectedEntry(); ok {
+			if _, compose := entry.Application.ComposeDir(); compose {
+				keys = "/ filter   r run   s stop   R restart   b rebuild   o open   ? help   q quit"
+			}
+		}
 	}
 	return footerStyle.MaxWidth(m.width).Render(keys)
 }
@@ -1049,7 +1093,7 @@ func stateIndicator(state string) (string, lipgloss.Style) {
 	switch state {
 	case "running":
 		return "●", passStyle
-	case "starting", "stopping", "restarting", "trusting":
+	case "starting", "stopping", "restarting", "rebuilding", "trusting":
 		return "◌", warningStyle
 	case "failed":
 		return "×", failStyle

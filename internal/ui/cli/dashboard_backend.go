@@ -211,27 +211,52 @@ func (b *dashboardBackend) Link(ctx context.Context, entry tui.Entry) ([]tui.Ent
 }
 
 func (b *dashboardBackend) Start(ctx context.Context, entry tui.Entry) (runtimeDomain.Process, error) {
+	resolved, err := b.runnable(ctx, entry)
+	if err != nil {
+		return runtimeDomain.Process{}, err
+	}
+	return b.launch(ctx, resolved, "", "")
+}
+
+func (b *dashboardBackend) Rebuild(ctx context.Context, entry tui.Entry) (runtimeDomain.Process, error) {
+	resolved, err := b.runnable(ctx, entry)
+	if err != nil {
+		return runtimeDomain.Process{}, err
+	}
+	dir, ok := resolved.Application.ComposeDir()
+	if !ok {
+		return runtimeDomain.Process{}, fmt.Errorf("application %q does not use Docker Compose", resolved.Application.Name)
+	}
+	build := joinShellCommand("docker", "compose", "build") + " && "
+	return b.launch(ctx, resolved, build, dir)
+}
+
+func (b *dashboardBackend) runnable(ctx context.Context, entry tui.Entry) (config.Resolved, error) {
 	if platformState := b.EnsurePlatform(ctx); platformState.State == tui.PlatformFailed {
-		return runtimeDomain.Process{}, errors.New(platformState.Detail)
+		return config.Resolved{}, errors.New(platformState.Detail)
 	}
 	resolved, err := b.application(entry)
 	if err != nil {
-		return runtimeDomain.Process{}, err
+		return config.Resolved{}, err
 	}
 	if resolved.Trust != nil {
 		store, openErr := sqlite.Open(b.owner.paths.Database())
 		if openErr != nil {
-			return runtimeDomain.Process{}, openErr
+			return config.Resolved{}, openErr
 		}
 		trusted, trustErr := store.Trusted(ctx, resolved.Trust.Path, resolved.Trust.Digest)
 		_ = store.Close()
 		if trustErr != nil {
-			return runtimeDomain.Process{}, trustErr
+			return config.Resolved{}, trustErr
 		}
 		if !trusted {
-			return runtimeDomain.Process{}, fmt.Errorf("repository commands are not trusted")
+			return config.Resolved{}, fmt.Errorf("repository commands are not trusted")
 		}
 	}
+	return resolved, nil
+}
+
+func (b *dashboardBackend) launch(ctx context.Context, resolved config.Resolved, prefix, dir string) (runtimeDomain.Process, error) {
 	executable, err := os.Executable()
 	if err != nil {
 		return runtimeDomain.Process{}, fmt.Errorf("find Cassie executable: %w", err)
@@ -241,7 +266,7 @@ func (b *dashboardBackend) Start(ctx context.Context, entry tui.Entry) (runtimeD
 		return runtimeDomain.Process{}, fmt.Errorf("resolve Cassie configuration path: %w", err)
 	}
 	app := resolved.Application
-	command := joinShellCommand(
+	command := prefix + joinShellCommand(
 		executable,
 		"--config", configPath,
 		"--at", app.Root,
@@ -252,6 +277,7 @@ func (b *dashboardBackend) Start(ctx context.Context, entry tui.Entry) (runtimeD
 		App:     app.Name,
 		Root:    app.Root,
 		Command: command,
+		Dir:     dir,
 		Env:     b.managedEnvironment(configPath),
 		Grace:   app.Grace.Duration + 5*time.Second,
 	})

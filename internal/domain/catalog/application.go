@@ -138,6 +138,20 @@ func (a Application) ValidateRunnable() error {
 	return nil
 }
 
+// ComposeDir reports where Cassie should run Compose operations for an app.
+func (a Application) ComposeDir() (string, bool) {
+	if len(a.Compose.Services) > 0 {
+		return "", true
+	}
+	for _, command := range a.Commands {
+		run := strings.TrimSpace(command.Run)
+		if run == "docker compose" || strings.HasPrefix(run, "docker compose ") || run == "docker-compose" || strings.HasPrefix(run, "docker-compose ") {
+			return command.Dir, true
+		}
+	}
+	return "", false
+}
+
 func (a Application) URL() string {
 	domain, err := NormalizeDomain(a.Domain, a.Name)
 	if err != nil {

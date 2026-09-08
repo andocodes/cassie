@@ -108,6 +108,37 @@ func TestDashboardStartsTheCompleteCassieRunLifecycle(t *testing.T) {
 	}
 }
 
+func TestDashboardRebuildsComposeBeforeStarting(t *testing.T) {
+	root := t.TempDir()
+	entry := tui.Entry{Application: catalog.Application{
+		Name: "phoebe", Root: root, Domain: "phoebe",
+		Commands: []catalog.Command{{Run: "docker compose up", Dir: "infra"}},
+	}}
+	client := &recordingDaemon{}
+	backend := newDashboardBackend(&app{
+		configPath: filepath.Join(root, "config.yaml"),
+		paths: system.Paths{
+			Config: filepath.Join(root, "config.yaml"),
+			Data:   filepath.Join(root, "data"),
+			State:  filepath.Join(root, "state"),
+		},
+	}, root, client)
+	backend.platform = tui.Platform{State: tui.PlatformReady}
+	backend.resolved[dashboardEntryKey(entry)] = config.Resolved{Application: entry.Application}
+
+	if _, err := backend.Rebuild(context.Background(), entry); err != nil {
+		t.Fatal(err)
+	}
+	build := strings.Index(client.spec.Command, "compose")
+	run := strings.Index(client.spec.Command, "run")
+	if build < 0 || run < 0 || build >= run || !strings.Contains(client.spec.Command, "build") {
+		t.Fatalf("rebuild command = %q", client.spec.Command)
+	}
+	if client.spec.Dir != "infra" {
+		t.Fatalf("rebuild directory = %q, want infra", client.spec.Dir)
+	}
+}
+
 func TestDashboardLinksDetectedRepositoryInUserConfiguration(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "pnpm-lock.yaml"), nil, 0o600); err != nil {

@@ -52,8 +52,9 @@ resulting session in the system credential vault.
 `cassie link --repo` to create a shared `.cassie.yaml`.
 
 Run `cassie` without a subcommand to open the workspace dashboard. Use `r` to
-run an app, `s` to stop it, `o` to open its URL, and `/` to filter. Apps keep
-running when the dashboard closes. Reopen Cassie to reconnect to their logs.
+run an app, `s` to stop it, `o` to open its URL, and `/` to filter. For a
+Compose app, use `b` to rebuild its images and restart it. Apps keep running
+when the dashboard closes. Reopen Cassie to reconnect to their logs.
 
 ## Configuration
 

@@ -15,7 +15,9 @@ import (
 )
 
 type linkingBackend struct {
-	linked Entry
+	linked  Entry
+	rebuilt Entry
+	stopped string
 }
 
 func (b *linkingBackend) Refresh(context.Context) ([]Entry, error) { return nil, nil }
@@ -38,7 +40,14 @@ func (b *linkingBackend) Link(_ context.Context, entry Entry) ([]Entry, error) {
 func (b *linkingBackend) Start(context.Context, Entry) (runtimeDomain.Process, error) {
 	return runtimeDomain.Process{}, nil
 }
-func (b *linkingBackend) Stop(context.Context, string) error { return nil }
+func (b *linkingBackend) Rebuild(_ context.Context, entry Entry) (runtimeDomain.Process, error) {
+	b.rebuilt = entry
+	return runtimeDomain.Process{ID: "rebuilt", App: entry.Application.Name, Root: entry.Application.Root, Status: runtimeDomain.StatusRunning}, nil
+}
+func (b *linkingBackend) Stop(_ context.Context, id string) error {
+	b.stopped = id
+	return nil
+}
 func (b *linkingBackend) Trust(context.Context, Entry) error { return nil }
 func (b *linkingBackend) Open(context.Context, string) error { return nil }
 
@@ -220,6 +229,45 @@ func TestDashboardTrustsRepositoryBeforeStarting(t *testing.T) {
 	}
 	if !strings.Contains(model.View(), "pnpm dev") {
 		t.Fatalf("trust overlay does not show the command:\n%s", model.View())
+	}
+}
+
+func TestDashboardSurfacesRebuildOnlyForComposeApplications(t *testing.T) {
+	composeEntry := Entry{Application: catalog.Application{
+		Name: "phoebe", Root: "/work/phoebe", Domain: "phoebe",
+		Commands: []catalog.Command{{Run: "docker compose up"}},
+	}, Linked: true}
+	backend := &linkingBackend{}
+	model := newDashboard(context.Background(), Options{Entries: []Entry{composeEntry}, Backend: backend})
+	model.processes["running"] = runtimeDomain.Process{
+		ID: "running", App: "phoebe", Root: "/work/phoebe", Status: runtimeDomain.StatusRunning,
+	}
+	model.rebuildLists()
+	if footer := ansi.Strip(model.footer()); !strings.Contains(footer, "b rebuild") {
+		t.Fatalf("Compose footer does not surface rebuild: %q", footer)
+	}
+	command := model.handleKey(key("b"))
+	if command == nil {
+		t.Fatal("b did not start a Compose rebuild")
+	}
+	message, ok := command().(actionMsg)
+	if !ok || message.err != nil {
+		t.Fatalf("rebuild command returned %#v", message)
+	}
+	if backend.stopped != "running" || backend.rebuilt.Application.Name != "phoebe" {
+		t.Fatalf("stop = %q, rebuilt = %#v", backend.stopped, backend.rebuilt)
+	}
+
+	model.entries = []Entry{{Application: catalog.Application{
+		Name: "web", Root: "/work/web", Domain: "web", Commands: []catalog.Command{{Run: "pnpm dev"}},
+	}, Linked: true}}
+	model.processes = make(map[string]runtimeDomain.Process)
+	model.rebuildLists()
+	if footer := ansi.Strip(model.footer()); strings.Contains(footer, "b rebuild") {
+		t.Fatalf("non-Compose footer surfaces rebuild: %q", footer)
+	}
+	if command := model.handleKey(key("b")); command != nil {
+		t.Fatal("b rebuilt a non-Compose application")
 	}
 }
 

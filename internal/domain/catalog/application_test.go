@@ -68,3 +68,14 @@ func TestSuggestedDomainShortensLongNamesWithoutCollisions(t *testing.T) {
 		t.Fatalf("suggested domains are invalid: %q, %q", first, second)
 	}
 }
+
+func TestApplicationDetectsComposeCommands(t *testing.T) {
+	app := Application{Commands: []Command{{Run: "prepare"}, {Run: "docker compose up", Dir: "infra"}}}
+	dir, ok := app.ComposeDir()
+	if !ok || dir != "infra" {
+		t.Fatalf("ComposeDir() = %q, %t", dir, ok)
+	}
+	if _, ok := (Application{Commands: []Command{{Run: "pnpm dev"}}}).ComposeDir(); ok {
+		t.Fatal("non-Compose application was detected as Compose")
+	}
+}
